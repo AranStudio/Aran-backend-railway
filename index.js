@@ -10,17 +10,20 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-// 👇 change this to your real frontend URL if you want to lock CORS down
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "*";
+import cors from "cors";
 
-// --- MIDDLEWARE ---
 app.use(
   cors({
-    origin: FRONTEND_ORIGIN,
-    credentials: true,
+    origin: [
+      "https://aran.studio",
+      "https://www.aran.studio",
+      "https://aran-frontend-service.vercel.app",
+      "http://localhost:5173"
+    ],
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
-app.use(express.json());
 
 // --- OPENAI CLIENT ---
 if (!process.env.OPENAI_API_KEY) {
