@@ -1,44 +1,37 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-
-// Route files (these should already exist in your /api folder)
-import generateRoute from "./api/generate.js";
-import visualsRoute from "./api/generate-visuals.js";
-import loginRoute from "./api/auth-login.js";
-import signupRoute from "./api/auth-signup.js";
+import router from "./api/router.js";
 
 dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-// CORS: allow your site + local dev
+// CORS for your real domain
 app.use(
   cors({
-    origin: ["https://www.aran.studio", "http://localhost:5173"],
+    origin: [
+      "https://www.aran.studio",
+      "https://aran.studio",
+      "http://localhost:5173"
+    ],
     methods: ["GET", "POST"],
-    credentials: false,
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
-// --- ROUTES ---
-// Story text + B&W storyboards
-app.use("/api/generate", generateRoute);
+// API ROUTES
+app.use("/api", router);
 
-// Color visuals
-app.use("/api/generate-visuals", visualsRoute);
-
-// Auth
-app.use("/api/auth-login", loginRoute);
-app.use("/api/auth-signup", signupRoute);
-
-// Health check – for quick “is it up?” testing
+// Health check
 app.get("/", (req, res) => {
-  res.send("ARAN backend is running 🚀");
+  res.send("Aran backend is online.");
 });
 
+// USE RAILWAY PORT
 const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, () => {
-  console.log(`ARAN backend listening on port ${PORT}`);
+  console.log(`Aran backend running on port ${PORT}`);
 });
