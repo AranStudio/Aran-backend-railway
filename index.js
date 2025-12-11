@@ -1,47 +1,28 @@
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
-
-import generate from "./routes/generate.js";
-import generateStoryboards from "./routes/generateStoryboards.js";
-import generateVisuals from "./routes/generateVisuals.js";
-import authSignup from "./routes/authSignup.js";
-import authLogin from "./routes/authLogin.js";
-
-dotenv.config();
+import routes from "./routes/index.js";
 
 const app = express();
-app.use(express.json());
 
-// --------------------
-// CORS FIX (THE ONE YOU NEED)
-// --------------------
+// ⭐ FIX CORS
 app.use(
   cors({
     origin: [
-      "http://localhost:5173",
-      "http://localhost:3000",
-      "https://aran-frontend-service.vercel.app",
-      "https://www.aran.studio"
+      "https://www.aran.studio",
+      "https://aran.studio",
+      "http://localhost:5173"
     ],
-    methods: ["GET", "POST"],
-    allowedHeaders: ["Content-Type", "Authorization"]
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
   })
 );
 
-// --------------------
-// ROUTES
-// --------------------
-app.use("/api/generate", generate);
-app.use("/api/generate-storyboards", generateStoryboards);
-app.use("/api/generate-visuals", generateVisuals);
-app.use("/api/auth-signup", authSignup);
-app.use("/api/auth-login", authLogin);
+// ⭐ Required for preflight
+app.options("*", cors());
 
-// --------------------
-// PORT
-// --------------------
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`ARAN backend running on port ${PORT}`);
-});
+app.use(express.json());
+app.use("/api", routes);
+
+const port = process.env.PORT || 3000;
+app.listen(port, () => console.log(`ARAN backend running on port ${port}`));
