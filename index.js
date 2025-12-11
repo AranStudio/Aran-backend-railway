@@ -1,3 +1,5 @@
+// index.js - super simple Express backend for Aran
+
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -8,25 +10,25 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 8080;
 
-// --- JSON BODY PARSER ---
+// --- BODY PARSER (CRITICAL) ---
 app.use(express.json());
 
-// --- CORS ---
+// --- CORS (ALLOW FRONTEND DOMAINS) ---
 app.use(
   cors({
     origin: [
       "https://aran.studio",
       "https://www.aran.studio",
       "https://aran-frontend-service.vercel.app",
-      "http://localhost:5173",
+      "http://localhost:5173"
     ],
     methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization"]
   })
 );
 
+// Preflight
 app.options("*", cors());
-
 
 // --- OPENAI CLIENT ---
 if (!process.env.OPENAI_API_KEY) {
@@ -43,12 +45,8 @@ app.get("/", (req, res) => {
 });
 
 // --- /api/generate ---
-// Takes: { prompt, contentType?, references? }
-// Returns: { title, style, frames: [{ description }] }
 app.post("/api/generate", async (req, res) => {
   try {
-    console.log("[ARAN] /api/generate body:", req.body);
-
     const { prompt, contentType, references } = req.body || {};
 
     if (!prompt || typeof prompt !== "string") {
@@ -115,12 +113,8 @@ app.post("/api/generate", async (req, res) => {
 });
 
 // --- /api/generate-storyboards ---
-// Takes: { frames: [{ description }] }
-// Returns: { storyboards: [{ url }] }
 app.post("/api/generate-storyboards", async (req, res) => {
   try {
-    console.log("[ARAN] /api/generate-storyboards body:", req.body);
-
     const { frames } = req.body || {};
     if (!Array.isArray(frames) || frames.length === 0) {
       return res.status(400).json({ error: "Missing frames" });
@@ -150,12 +144,8 @@ app.post("/api/generate-storyboards", async (req, res) => {
 });
 
 // --- /api/generate-images ---
-// Takes: { frames: [{ description }], style? }
-// Returns: { images: [{ url }] }
 app.post("/api/generate-images", async (req, res) => {
   try {
-    console.log("[ARAN] /api/generate-images body:", req.body);
-
     const { frames, style } = req.body || {};
     if (!Array.isArray(frames) || frames.length === 0) {
       return res.status(400).json({ error: "Missing frames" });
