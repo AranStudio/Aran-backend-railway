@@ -67,16 +67,18 @@ app.post("/api/generate", async (req, res) => {
       ? `The content type is: ${contentType}.`
       : "The content type is flexible.";
 
-    const systemPrompt =
-      'You are "Aran", a story-deck engine. You MUST respond with STRICT JSON ONLY, with this shape: ' +
-      `{
-        "title": string,
-        "style": string,
-        "frames": [
-          { "description": string }
-        ]
-      } ` +
-      "Use 8–12 frames. No extra fields, no commentary, JSON only.";
+  const systemPrompt =
+  'You are "Aran", a story-deck engine. You MUST respond with STRICT JSON ONLY, with this shape: ' +
+  `{
+    "title": string,
+    "style": string,
+    "story": string,
+    "frames": [
+      { "description": string }
+    ]
+  } ` +
+  'Use 8–12 frames. The "story" field should be a short 1–3 paragraph narrative that ties all the frames together. No extra fields, no commentary, JSON only.';
+
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
