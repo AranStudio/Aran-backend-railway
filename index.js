@@ -1,5 +1,3 @@
-// index.js - super simple Express backend for Aran
-
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -10,34 +8,25 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 8080;
 
-// 🔹 Parse JSON request bodies (CRUCIAL)
+// --- JSON BODY PARSER ---
 app.use(express.json());
 
-// 🔹 CORS setup
-const allowedOrigins = [
-  "https://aran.studio",
-  "https://www.aran.studio",
-  "https://aran-frontend-service.vercel.app",
-  "http://localhost:5173"
-];
-
+// --- CORS ---
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Allow same-origin / server-to-server (no origin header)
-      if (!origin || allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-      console.warn("[ARAN] Blocked CORS origin:", origin);
-      return callback(new Error("Not allowed by CORS"));
-    },
+    origin: [
+      "https://aran.studio",
+      "https://www.aran.studio",
+      "https://aran-frontend-service.vercel.app",
+      "http://localhost:5173",
+    ],
     methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"]
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
-// Handle preflight explicitly
 app.options("*", cors());
+
 
 // --- OPENAI CLIENT ---
 if (!process.env.OPENAI_API_KEY) {
