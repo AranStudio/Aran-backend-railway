@@ -1,66 +1,44 @@
-// index.js  (Railway backend entry)
-
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 
-import generateHandler from "./api/generate.js";
-import generateStoryboardsHandler from "./api/generate-storyboards.js";
-import generateImagesHandler from "./api/generate-images.js";
-import authLoginHandler from "./api/auth-login.js";
-import authSignupHandler from "./api/auth-signup.js";
+// Route files (these should already exist in your /api folder)
+import generateRoute from "./api/generate.js";
+import visualsRoute from "./api/generate-visuals.js";
+import loginRoute from "./api/auth-login.js";
+import signupRoute from "./api/auth-signup.js";
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+app.use(express.json());
 
-// --- CORS SETUP -------------------------------------------------
-
-const allowedOrigins = [
-  "https://www.aran.studio",
-  "https://aran.studio",
-  "https://aran-frontend-service.vercel.app",
-  "http://localhost:5173",
-];
-
+// CORS: allow your site + local dev
 app.use(
   cors({
-    origin(origin, callback) {
-      // allow server-to-server / curl (no origin) and our whitelisted origins
-      if (!origin || allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-      return callback(new Error("Not allowed by CORS"));
-    },
-    methods: ["GET", "POST", "OPTIONS"],
+    origin: ["https://www.aran.studio", "http://localhost:5173"],
+    methods: ["GET", "POST"],
+    credentials: false,
   })
 );
 
-// handle preflight nicely
-app.options("*", cors());
+// --- ROUTES ---
+// Story text + B&W storyboards
+app.use("/api/generate", generateRoute);
 
-// --- BODY PARSING -----------------------------------------------
+// Color visuals
+app.use("/api/generate-visuals", visualsRoute);
 
-app.use(express.json());
+// Auth
+app.use("/api/auth-login", loginRoute);
+app.use("/api/auth-signup", signupRoute);
 
-// --- SIMPLE HEALTH CHECK ----------------------------------------
-
-app.get("/", (_req, res) => {
-  res.json({ ok: true, service: "aran-backend-railway" });
+// Health check – for quick “is it up?” testing
+app.get("/", (req, res) => {
+  res.send("ARAN backend is running 🚀");
 });
 
-// --- API ROUTES -------------------------------------------------
-
-app.post("/api/generate", generateHandler);
-app.post("/api/generate-storyboards", generateStoryboardsHandler);
-app.post("/api/generate-images", generateImagesHandler);
-
-app.post("/api/auth-login", authLoginHandler);
-app.post("/api/auth-signup", authSignupHandler);
-
-// --- START SERVER -----------------------------------------------
-
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`ARAN backend listening on port ${PORT}`);
 });
