@@ -1,37 +1,47 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import router from "./api/router.js";
+
+import generate from "./routes/generate.js";
+import generateStoryboards from "./routes/generateStoryboards.js";
+import generateVisuals from "./routes/generateVisuals.js";
+import authSignup from "./routes/authSignup.js";
+import authLogin from "./routes/authLogin.js";
 
 dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-// CORS for your real domain
+// --------------------
+// CORS FIX (THE ONE YOU NEED)
+// --------------------
 app.use(
   cors({
     origin: [
-      "https://www.aran.studio",
-      "https://aran.studio",
-      "http://localhost:5173"
+      "http://localhost:5173",
+      "http://localhost:3000",
+      "https://aran-frontend-service.vercel.app",
+      "https://www.aran.studio"
     ],
     methods: ["GET", "POST"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization"]
   })
 );
 
-// API ROUTES
-app.use("/api", router);
+// --------------------
+// ROUTES
+// --------------------
+app.use("/api/generate", generate);
+app.use("/api/generate-storyboards", generateStoryboards);
+app.use("/api/generate-visuals", generateVisuals);
+app.use("/api/auth-signup", authSignup);
+app.use("/api/auth-login", authLogin);
 
-// Health check
-app.get("/", (req, res) => {
-  res.send("Aran backend is online.");
-});
-
-// USE RAILWAY PORT
+// --------------------
+// PORT
+// --------------------
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
-  console.log(`Aran backend running on port ${PORT}`);
+  console.log(`ARAN backend running on port ${PORT}`);
 });
