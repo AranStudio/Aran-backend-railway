@@ -8,25 +8,36 @@ import OpenAI from "openai";
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 8080;
 
-import cors from "cors";
+// 🔹 Parse JSON request bodies (CRUCIAL)
+app.use(express.json());
+
+// 🔹 CORS setup
+const allowedOrigins = [
+  "https://aran.studio",
+  "https://www.aran.studio",
+  "https://aran-frontend-service.vercel.app",
+  "http://localhost:5173"
+];
 
 app.use(
   cors({
-    origin: [
-      "https://aran.studio",
-      "https://www.aran.studio",
-      "https://aran-frontend-service.vercel.app",
-      "http://localhost:5173"
-    ],
+    origin: (origin, callback) => {
+      // Allow same-origin / server-to-server (no origin header)
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      console.warn("[ARAN] Blocked CORS origin:", origin);
+      return callback(new Error("Not allowed by CORS"));
+    },
     methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization"]
   })
 );
 
+// Handle preflight explicitly
 app.options("*", cors());
-
 
 // --- OPENAI CLIENT ---
 if (!process.env.OPENAI_API_KEY) {
@@ -34,7 +45,7 @@ if (!process.env.OPENAI_API_KEY) {
 }
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY
 });
 
 // --- HEALTH CHECK ---
@@ -47,6 +58,8 @@ app.get("/", (req, res) => {
 // Returns: { title, style, frames: [{ description }] }
 app.post("/api/generate", async (req, res) => {
   try {
+    console.log("[ARAN] /api/generate body:", req.body);
+
     const { prompt, contentType, references } = req.body || {};
 
     if (!prompt || typeof prompt !== "string") {
@@ -73,8 +86,7 @@ app.post("/api/generate", async (req, res) => {
         "title": string,
         "style": string,
         "frames": [
-          { "description": string },
-          ...
+          { "description": string }
         ]
       } ` +
       "Use 8–12 frames. No extra fields, no commentary, JSON only.";
@@ -86,9 +98,9 @@ app.post("/api/generate", async (req, res) => {
         { role: "system", content: systemPrompt },
         {
           role: "user",
-          content: `User prompt: ${prompt}\n${typeText}\n${refText}`.trim(),
-        },
-      ],
+          content: `User prompt: ${prompt}\n${typeText}\n${refText}`.trim()
+        }
+      ]
     });
 
     const raw = completion.choices?.[0]?.message?.content || "{}";
@@ -118,6 +130,8 @@ app.post("/api/generate", async (req, res) => {
 // Returns: { storyboards: [{ url }] }
 app.post("/api/generate-storyboards", async (req, res) => {
   try {
+    console.log("[ARAN] /api/generate-storyboards body:", req.body);
+
     const { frames } = req.body || {};
     if (!Array.isArray(frames) || frames.length === 0) {
       return res.status(400).json({ error: "Missing frames" });
@@ -132,7 +146,7 @@ app.post("/api/generate-storyboards", async (req, res) => {
         model: "gpt-image-1",
         prompt: `black and white pencil storyboard sketch, cinematic, 16:9, no text, for this beat: ${desc}`,
         size: "1024x576",
-        n: 1,
+        n: 1
       });
 
       const url = img.data?.[0]?.url || null;
@@ -151,6 +165,8 @@ app.post("/api/generate-storyboards", async (req, res) => {
 // Returns: { images: [{ url }] }
 app.post("/api/generate-images", async (req, res) => {
   try {
+    console.log("[ARAN] /api/generate-images body:", req.body);
+
     const { frames, style } = req.body || {};
     if (!Array.isArray(frames) || frames.length === 0) {
       return res.status(400).json({ error: "Missing frames" });
@@ -169,7 +185,7 @@ app.post("/api/generate-images", async (req, res) => {
         model: "gpt-image-1",
         prompt: `${styleText} Create a color frame for this beat: ${desc}`,
         size: "1024x576",
-        n: 1,
+        n: 1
       });
 
       const url = img.data?.[0]?.url || null;
