@@ -25,6 +25,9 @@ app.use(
   })
 );
 
+app.options("*", cors());
+
+
 // --- OPENAI CLIENT ---
 if (!process.env.OPENAI_API_KEY) {
   console.warn("[ARAN] WARNING: No OPENAI_API_KEY found in environment.");
