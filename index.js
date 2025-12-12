@@ -48,11 +48,14 @@ app.post("/api/generate", async (req, res) => {
     }
 
     const typeText = contentType || "Any story – let Aran decide";
-    const refsText = Array.isArray(references) && references.length
-      ? references
-          .map((r) => `${r.title || "Untitled"} (${r.aspect || "general"})`)
-          .join("; ")
-      : "No explicit references.";
+    const refsText =
+      Array.isArray(references) && references.length
+        ? references
+            .map(
+              (r) => `${r.title || "Untitled"} (${r.aspect || "general"})`
+            )
+            .join("; ")
+        : "No explicit references.";
 
     const systemPrompt =
       "You are ARAN, a story engine that returns clean JSON only. " +
@@ -84,7 +87,9 @@ ${prompt}
       parsed = JSON.parse(raw);
     } catch (err) {
       console.error("[ARAN] /api/generate JSON parse error:", err, raw);
-      return res.status(500).json({ error: "Failed to parse JSON from OpenAI." });
+      return res
+        .status(500)
+        .json({ error: "Failed to parse JSON from OpenAI." });
     }
 
     const title = parsed.title || "Untitled Story";
@@ -135,7 +140,8 @@ app.post("/api/generate-storyboards", async (req, res) => {
       const img = await openai.images.generate({
         model: "gpt-image-1",
         prompt: `black and white pencil storyboard sketch, cinematic, 16:9, no text, highly readable composition. Beat description: ${desc}`,
-        size: "1024x576",
+        // size must be one of: 1024x1024, 1024x1536, 1536x1024, or auto
+        size: "1536x1024",
         n: 1,
       });
 
@@ -146,7 +152,6 @@ app.post("/api/generate-storyboards", async (req, res) => {
     res.json({ storyboards });
   } catch (err) {
     console.error("[ARAN] /api/generate-storyboards error:", err);
-    // surface a little more detail to help debugging
     res.status(500).json({
       error: "Storyboard generation failed.",
       detail: err?.message || String(err),
@@ -174,8 +179,10 @@ app.post("/api/generate-images", async (req, res) => {
 
       const img = await openai.images.generate({
         model: "gpt-image-1",
-        prompt: `highly cinematic color frame, 16:9, richly lit, no text. Style: ${style || "user story"}. Beat description: ${desc}`,
-        size: "1024x576",
+        prompt: `highly cinematic color frame, 16:9, richly lit, no text. Style: ${
+          style || "user story"
+        }. Beat description: ${desc}`,
+        size: "1536x1024",
         n: 1,
       });
 
