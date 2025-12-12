@@ -15,6 +15,9 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Limit how many frames we generate images for per request
+const MAX_IMAGE_FRAMES = 6;
+
 // --- Middleware ---
 app.use(
   cors({
@@ -112,6 +115,10 @@ ${prompt}
         .json({ error: "No frames returned from OpenAI." });
     }
 
+    console.log(
+      `[ARAN] /api/generate returned ${frames.length} frames for "${title}"`
+    );
+
     res.json({ title, style, frames });
   } catch (err) {
     console.error("[ARAN] /api/generate error:", err);
@@ -130,9 +137,12 @@ app.post("/api/generate-storyboards", async (req, res) => {
       return res.status(400).json({ error: "Missing frames" });
     }
 
-    const storyboards = [];
+    const limitedFrames = frames.slice(0, MAX_IMAGE_FRAMES);
+    console.log(
+      `[ARAN] /api/generate-storyboards generating B&W for ${limitedFrames.length} frame(s)`
+    );
 
-    for (const frame of frames) {
+    const storyboardPromises = limitedFrames.map(async (frame, index) => {
       const desc =
         (frame && frame.description) ||
         "A cinematic black-and-white storyboard frame.";
@@ -146,8 +156,13 @@ app.post("/api/generate-storyboards", async (req, res) => {
       });
 
       const url = img.data?.[0]?.url || null;
-      storyboards.push({ url });
-    }
+      console.log(
+        `[ARAN] Storyboard ${index + 1}/${limitedFrames.length} generated`
+      );
+      return { url };
+    });
+
+    const storyboards = await Promise.all(storyboardPromises);
 
     res.json({ storyboards });
   } catch (err) {
@@ -170,9 +185,12 @@ app.post("/api/generate-images", async (req, res) => {
       return res.status(400).json({ error: "Missing frames" });
     }
 
-    const images = [];
+    const limitedFrames = frames.slice(0, MAX_IMAGE_FRAMES);
+    console.log(
+      `[ARAN] /api/generate-images generating color for ${limitedFrames.length} frame(s)`
+    );
 
-    for (const frame of frames) {
+    const imagePromises = limitedFrames.map(async (frame, index) => {
       const desc =
         (frame && frame.description) ||
         "A cinematic color frame from the story.";
@@ -187,8 +205,13 @@ app.post("/api/generate-images", async (req, res) => {
       });
 
       const url = img.data?.[0]?.url || null;
-      images.push({ url });
-    }
+      console.log(
+        `[ARAN] Color image ${index + 1}/${limitedFrames.length} generated`
+      );
+      return { url };
+    });
+
+    const images = await Promise.all(imagePromises);
 
     res.json({ images });
   } catch (err) {
