@@ -10,11 +10,9 @@ const port = process.env.PORT || 8080;
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Models (keep flexible via env vars)
 const CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || "gpt-4o-mini";
 const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
 
-// Limits
 const MIN_BEATS = 4;
 const MAX_BEATS = 6;
 const MAX_IMAGE_FRAMES = 6;
@@ -28,7 +26,7 @@ app.use(
 );
 app.use(express.json({ limit: "12mb" }));
 
-// Helpful signature header (proves response is from API)
+// signature header so we can verify responses come from the API
 app.use((req, res, next) => {
   res.setHeader("x-aran-api", "true");
   next();
@@ -60,7 +58,6 @@ function dataUrlFromB64(b64) {
   return b64 ? `data:image/png;base64,${b64}` : null;
 }
 
-// Better error extraction for Railway logs + frontend debugging
 function serializeErr(err) {
   return {
     message: err?.message || String(err),
@@ -68,44 +65,43 @@ function serializeErr(err) {
     status: err?.status,
     code: err?.code,
     type: err?.type,
-    // OpenAI SDK often puts server payload here:
-    response: err?.response,
     error: err?.error,
+    response: err?.response,
   };
 }
 
+/**
+ * ✅ IMPORTANT:
+ * For gpt-image-1, DO NOT send response_format.
+ * It returns base64 (b64_json) by default. :contentReference[oaicite:1]{index=1}
+ */
 async function generateSingleImageDataUrl(prompt, size = "1536x1024") {
-  // Force base64 so we don't depend on img.data[0].url
   const img = await openai.images.generate({
     model: IMAGE_MODEL,
     prompt,
     size,
     n: 1,
-    response_format: "b64_json",
+    // no response_format here
   });
 
   const b64 = img?.data?.[0]?.b64_json || null;
   return dataUrlFromB64(b64);
 }
 
-// --- Health ---
+// health
 app.get("/", (req, res) => res.json({ ok: true, service: "aran-api" }));
 app.get("/health", (req, res) => res.json({ ok: true }));
 
-// ✅ Ping routes (so browser GET doesn't say "Cannot GET …")
-app.get("/api/generate", (req, res) =>
-  res.json({ ok: true, method: "GET", hint: "Use POST with { prompt, contentType, references }" })
-);
+// browser-friendly pings
+app.get("/api/generate", (req, res) => res.json({ ok: true, hint: "POST { prompt, contentType, references }" }));
 app.get("/api/generate-images", (req, res) =>
-  res.json({ ok: true, method: "GET", hint: "Use POST with { frames: [{description}], style? }" })
+  res.json({ ok: true, hint: "POST { frames:[{description}], style? }" })
 );
 app.get("/api/generate-storyboards", (req, res) =>
-  res.json({ ok: true, method: "GET", hint: "Use POST with { frames: [{description}] }" })
+  res.json({ ok: true, hint: "POST { frames:[{description}] }" })
 );
 
-// ─────────────────────────────────────────────
-//  /api/generate → 4–6 beats JSON
-// ─────────────────────────────────────────────
+// beats: 4–6
 app.post("/api/generate", async (req, res) => {
   try {
     const { prompt, contentType, references } = req.body || {};
@@ -166,7 +162,6 @@ Output JSON now.
     const title = safeString(parsed.title).trim() || "Untitled Story";
     const style = safeString(parsed.style).trim() || "";
     const frames = normalizeFrames(parsed.frames);
-
     if (!frames.length) return res.status(500).json({ error: "No beats returned" });
 
     res.json({ title, style, frames });
@@ -176,9 +171,7 @@ Output JSON now.
   }
 });
 
-// ─────────────────────────────────────────────
-//  /api/generate-images → returns { images:[{url:dataURL}] }
-// ─────────────────────────────────────────────
+// color images (hero or per-beat)
 app.post("/api/generate-images", async (req, res) => {
   try {
     const { frames, style } = req.body || {};
@@ -186,8 +179,6 @@ app.post("/api/generate-images", async (req, res) => {
 
     const limited = frames.slice(0, MAX_IMAGE_FRAMES);
     const styleText = safeString(style).trim();
-
-    console.log(`[ARAN] /api/generate-images frames=${limited.length}`);
 
     const images = [];
     for (const f of limited) {
@@ -214,17 +205,13 @@ ${desc}
   }
 });
 
-// ─────────────────────────────────────────────
-//  /api/generate-storyboards → returns { storyboards:[{url:dataURL}] }
-// ─────────────────────────────────────────────
+// b&w storyboards
 app.post("/api/generate-storyboards", async (req, res) => {
   try {
     const { frames } = req.body || {};
     if (!Array.isArray(frames) || !frames.length) return res.status(400).json({ error: "Missing frames" });
 
     const limited = frames.slice(0, MAX_IMAGE_FRAMES);
-
-    console.log(`[ARAN] /api/generate-storyboards frames=${limited.length}`);
 
     const storyboards = [];
     for (const f of limited) {
@@ -248,9 +235,5 @@ ${desc}
     res.status(500).json({ error: "Storyboard generation failed", detail: serializeErr(err) });
   }
 });
-
-// Placeholder auth endpoints
-app.post("/api/auth/signup", (req, res) => res.json({ ok: true, mode: "signup-placeholder" }));
-app.post("/api/auth/login", (req, res) => res.json({ ok: true, mode: "login-placeholder" }));
 
 app.listen(port, () => console.log(`[ARAN] API listening on ${port}`));
