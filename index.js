@@ -147,20 +147,18 @@ app.post("/api/generate-storyboards", async (req, res) => {
         (frame && frame.description) ||
         "A cinematic black-and-white storyboard frame.";
 
-      const img = await openai.images.generate({
-        model: "gpt-image-1",
-        prompt: `black and white pencil storyboard sketch, cinematic, 16:9, no text, highly readable composition. Beat description: ${desc}`,
-        // size must be one of: 1024x1024, 1024x1536, 1536x1024, or auto
-        size: "1536x1024",
-        n: 1,
-      });
+   const img = await openai.images.generate({
+  model: "gpt-image-1",
+  prompt: `black and white pencil storyboard sketch... Beat description: ${desc}`,
+  size: "1536x1024",
+  n: 1,
+  response_format: "b64_json",
+});
 
-      const url = img.data?.[0]?.url || null;
-      console.log(
-        `[ARAN] Storyboard ${index + 1}/${limitedFrames.length} generated`
-      );
-      return { url };
-    });
+const b64 = img.data?.[0]?.b64_json || null;
+const url = b64 ? `data:image/png;base64,${b64}` : null;
+return { url };
+
 
     const storyboards = await Promise.all(storyboardPromises);
 
@@ -195,21 +193,18 @@ app.post("/api/generate-images", async (req, res) => {
         (frame && frame.description) ||
         "A cinematic color frame from the story.";
 
-      const img = await openai.images.generate({
-        model: "gpt-image-1",
-        prompt: `highly cinematic color frame, 16:9, richly lit, no text. Style: ${
-          style || "user story"
-        }. Beat description: ${desc}`,
-        size: "1536x1024",
-        n: 1,
-      });
+  const img = await openai.images.generate({
+  model: "gpt-image-1",
+  prompt: `cinematic color concept art: ${desc}`,
+  size: "1536x1024",
+  n: 1,
+  response_format: "b64_json",
+});
 
-      const url = img.data?.[0]?.url || null;
-      console.log(
-        `[ARAN] Color image ${index + 1}/${limitedFrames.length} generated`
-      );
-      return { url };
-    });
+const b64 = img.data?.[0]?.b64_json || null;
+const url = b64 ? `data:image/png;base64,${b64}` : null;
+return { url };
+
 
     const images = await Promise.all(imagePromises);
 
