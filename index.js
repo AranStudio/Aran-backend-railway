@@ -1,8 +1,3 @@
-// index.js — Express backend for ARAN (beats + hero + boards + visuals)
-// ✅ Fixes: url:null by using response_format: "b64_json"
-// ✅ Enforces: 4–6 beats max
-// ✅ Works with: "type": "module" in package.json
-
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -13,30 +8,36 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 8080;
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// --- Config ---
 const CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || "gpt-4o-mini";
 const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
-const MAX_BEATS = 6;
 const MIN_BEATS = 4;
+const MAX_BEATS = 6;
 const MAX_IMAGE_FRAMES = 6;
 
-// --- Middleware ---
 app.use(
   cors({
-    origin: true, // allows aran.studio + localhost + previews
+    origin: true,
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "12mb" }));
 
-// --- Helpers ---
-function safeString(x) {
-  return typeof x === "string" ? x : "";
+// ✅ Signature header so you can prove responses come from the API
+app.use((req, res, next) => {
+  res.setHeader("x-aran-api", "true");
+  next();
+});
+
+const safeString = (x) => (typeof x === "string" ? x : "");
+
+function referencesToText(references) {
+  if (!Array.isArray(references) || !references.length) return "None.";
+  return references
+    .map((r) => `${safeString(r.title).trim() || "Untitled"} (${safeString(r.aspect).trim() || "general"})`)
+    .join("; ");
 }
 
 function normalizeFrames(frames) {
@@ -48,24 +49,11 @@ function normalizeFrames(frames) {
       return { description: "" };
     })
     .filter((f) => f.description.length > 0);
-
   return cleaned.slice(0, MAX_BEATS);
 }
 
-function referencesToText(references) {
-  if (!Array.isArray(references) || references.length === 0) return "None.";
-  return references
-    .map((r) => {
-      const title = safeString(r.title).trim() || "Untitled";
-      const aspect = safeString(r.aspect).trim() || "general";
-      return `${title} (${aspect})`;
-    })
-    .join("; ");
-}
-
-function asDataUrlFromB64(b64) {
-  if (!b64) return null;
-  return `data:image/png;base64,${b64}`;
+function dataUrlFromB64(b64) {
+  return b64 ? `data:image/png;base64,${b64}` : null;
 }
 
 async function generateSingleImageDataUrl(prompt, size = "1536x1024") {
@@ -78,24 +66,28 @@ async function generateSingleImageDataUrl(prompt, size = "1536x1024") {
   });
 
   const b64 = img?.data?.[0]?.b64_json || null;
-  return asDataUrlFromB64(b64);
+  return dataUrlFromB64(b64);
 }
 
-// --- Health ---
-app.get("/", (req, res) => {
-  res.json({ ok: true, service: "aran-api", endpoints: ["/api/generate", "/api/generate-images", "/api/generate-storyboards"] });
-});
+// Health
+app.get("/", (req, res) => res.json({ ok: true, service: "aran-api" }));
 app.get("/health", (req, res) => res.json({ ok: true }));
 
-// ─────────────────────────────────────────────
-//  /api/generate → 4–6 beats
-//  Body: { prompt, contentType, references }
-//  Returns: { title, style, frames:[{description}] }
-// ─────────────────────────────────────────────
+// ✅ Ping routes so testing in browser doesn’t show “Cannot GET …”
+app.get("/api/generate-images", (req, res) => {
+  res.json({ ok: true, method: "GET", hint: "Use POST with { frames: [{description}], style? }" });
+});
+app.get("/api/generate-storyboards", (req, res) => {
+  res.json({ ok: true, method: "GET", hint: "Use POST with { frames: [{description}] }" });
+});
+app.get("/api/generate", (req, res) => {
+  res.json({ ok: true, method: "GET", hint: "Use POST with { prompt, contentType, references }" });
+});
+
+// Beats: 4–6
 app.post("/api/generate", async (req, res) => {
   try {
     const { prompt, contentType, references } = req.body || {};
-
     const userPrompt = safeString(prompt).trim();
     if (!userPrompt) return res.status(400).json({ error: "Missing prompt" });
 
@@ -103,23 +95,20 @@ app.post("/api/generate", async (req, res) => {
     const refsText = referencesToText(references);
 
     const system = `
-You are ARAN, a creative development assistant for film, commercials, and narrative work.
+You are ARAN, a creative development assistant.
 
-You MUST output STRICT JSON ONLY (no markdown, no commentary) matching this schema:
+Return STRICT JSON ONLY matching:
 {
   "title": "string",
   "style": "string",
-  "frames": [
-    { "description": "string" }
-  ]
+  "frames": [{ "description": "string" }]
 }
 
 Rules:
 - Return ${MIN_BEATS} to ${MAX_BEATS} beats (MAX ${MAX_BEATS}).
 - Beats are professional treatment beats (no dialogue, no screenplay formatting).
-- Each beat is one short paragraph max. Clean, cinematic, intentional.
-- Avoid filler, repetition, and "student script" vibes.
-- "style" should be a concise visual direction (e.g., “high-contrast night city, handheld energy, premium commercial polish”).
+- One short paragraph per beat max. No filler.
+- "style" is concise visual direction.
 `.trim();
 
     const user = `
@@ -129,7 +118,7 @@ References: ${refsText}
 Concept:
 ${userPrompt}
 
-Now output the JSON.
+Output JSON now.
 `.trim();
 
     const completion = await openai.chat.completions.create({
@@ -143,24 +132,20 @@ Now output the JSON.
 
     const raw = completion?.choices?.[0]?.message?.content || "";
     let parsed;
+
     try {
       parsed = JSON.parse(raw);
     } catch {
-      // If the model returns extra text, try to salvage JSON block
       const start = raw.indexOf("{");
       const end = raw.lastIndexOf("}");
-      if (start !== -1 && end !== -1 && end > start) {
-        parsed = JSON.parse(raw.slice(start, end + 1));
-      } else {
-        return res.status(500).json({ error: "Model did not return valid JSON", raw });
-      }
+      if (start !== -1 && end !== -1 && end > start) parsed = JSON.parse(raw.slice(start, end + 1));
+      else return res.status(500).json({ error: "Model did not return valid JSON", raw });
     }
 
     const title = safeString(parsed.title).trim() || "Untitled Story";
     const style = safeString(parsed.style).trim() || "";
     const frames = normalizeFrames(parsed.frames);
 
-    // Enforce minimum: if fewer than MIN_BEATS, return what we have (or you can hard fail).
     if (!frames.length) return res.status(500).json({ error: "No beats returned" });
 
     res.json({ title, style, frames });
@@ -170,18 +155,11 @@ Now output the JSON.
   }
 });
 
-// ─────────────────────────────────────────────
-//  /api/generate-images → color visuals (or hero image)
-//  Body: { frames:[{description}], style? }
-//  Returns: { images:[{url}] } where url is data:image/png;base64,...
-// ─────────────────────────────────────────────
+// Color images (hero or per-beat visuals)
 app.post("/api/generate-images", async (req, res) => {
   try {
     const { frames, style } = req.body || {};
-
-    if (!Array.isArray(frames) || frames.length === 0) {
-      return res.status(400).json({ error: "Missing frames" });
-    }
+    if (!Array.isArray(frames) || !frames.length) return res.status(400).json({ error: "Missing frames" });
 
     const limited = frames.slice(0, MAX_IMAGE_FRAMES);
     const styleText = safeString(style).trim();
@@ -194,14 +172,13 @@ Create a single cinematic color frame.
 ${styleText ? `Style: ${styleText}` : ""}
 Rules:
 - No text.
-- Strong composition, premium film/commercial look.
-- Photoreal or high-end concept art (whichever fits best).
+- Premium film/commercial composition.
 Scene:
 ${desc}
 `.trim();
 
       const url = await generateSingleImageDataUrl(prompt);
-      images.push({ url: url || null });
+      images.push({ url });
     }
 
     res.json({ images });
@@ -211,35 +188,27 @@ ${desc}
   }
 });
 
-// ─────────────────────────────────────────────
-//  /api/generate-storyboards → B&W storyboard sketches
-//  Body: { frames:[{description}] }
-//  Returns: { storyboards:[{url}] } where url is data:image/png;base64,...
-// ─────────────────────────────────────────────
+// B&W storyboards
 app.post("/api/generate-storyboards", async (req, res) => {
   try {
     const { frames } = req.body || {};
-
-    if (!Array.isArray(frames) || frames.length === 0) {
-      return res.status(400).json({ error: "Missing frames" });
-    }
+    if (!Array.isArray(frames) || !frames.length) return res.status(400).json({ error: "Missing frames" });
 
     const limited = frames.slice(0, MAX_IMAGE_FRAMES);
-
     const storyboards = [];
+
     for (const f of limited) {
       const desc = typeof f === "string" ? f : safeString(f?.description);
       const prompt = `
 RUDIMENTARY BLACK-AND-WHITE STORYBOARD SKETCH.
-Quick director-style pencil drawing.
-Minimal detail. No text. No captions. No borders.
+Quick director-style pencil drawing. Minimal detail. No text.
 
 Scene:
 ${desc}
 `.trim();
 
       const url = await generateSingleImageDataUrl(prompt);
-      storyboards.push({ url: url || null });
+      storyboards.push({ url });
     }
 
     res.json({ storyboards });
@@ -249,15 +218,4 @@ ${desc}
   }
 });
 
-// ─────────────────────────────────────────────
-// Placeholder auth endpoints (kept for compatibility)
-// ─────────────────────────────────────────────
-app.post("/api/auth/signup", (req, res) => res.json({ ok: true, mode: "signup-placeholder" }));
-app.post("/api/auth/login", (req, res) => res.json({ ok: true, mode: "login-placeholder" }));
-
-// ─────────────────────────────────────────────
-// Start server
-// ─────────────────────────────────────────────
-app.listen(port, () => {
-  console.log(`[ARAN] API listening on port ${port}`);
-});
+app.listen(port, () => console.log(`[ARAN] API listening on ${port}`));
