@@ -1,4 +1,7 @@
-// index.js - Express backend for ARAN (beats + boards + visuals)
+// index.js — Express backend for ARAN (beats + hero + boards + visuals)
+// ✅ Fixes: url:null by using response_format: "b64_json"
+// ✅ Enforces: 4–6 beats max
+// ✅ Works with: "type": "module" in package.json
 
 import express from "express";
 import cors from "cors";
@@ -10,170 +13,167 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 8080;
 
-// --- OpenAI client ---
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Limit how many frames we generate images for per request
+// --- Config ---
+const CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || "gpt-4o-mini";
+const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
+const MAX_BEATS = 6;
+const MIN_BEATS = 4;
 const MAX_IMAGE_FRAMES = 6;
 
 // --- Middleware ---
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173",
-      "http://localhost:4173",
-      "https://www.aran.studio",
-      "https://aran.studio",
-    ],
+    origin: true, // allows aran.studio + localhost + previews
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+app.use(express.json({ limit: "10mb" }));
 
-app.use(express.json());
+// --- Helpers ---
+function safeString(x) {
+  return typeof x === "string" ? x : "";
+}
 
-// --- Health check ---
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true, timestamp: new Date().toISOString() });
+function normalizeFrames(frames) {
+  if (!Array.isArray(frames)) return [];
+  const cleaned = frames
+    .map((f) => {
+      if (typeof f === "string") return { description: f.trim() };
+      if (f && typeof f === "object") return { description: safeString(f.description).trim() };
+      return { description: "" };
+    })
+    .filter((f) => f.description.length > 0);
+
+  return cleaned.slice(0, MAX_BEATS);
+}
+
+function referencesToText(references) {
+  if (!Array.isArray(references) || references.length === 0) return "None.";
+  return references
+    .map((r) => {
+      const title = safeString(r.title).trim() || "Untitled";
+      const aspect = safeString(r.aspect).trim() || "general";
+      return `${title} (${aspect})`;
+    })
+    .join("; ");
+}
+
+function asDataUrlFromB64(b64) {
+  if (!b64) return null;
+  return `data:image/png;base64,${b64}`;
+}
+
+async function generateSingleImageDataUrl(prompt, size = "1536x1024") {
+  const img = await openai.images.generate({
+    model: IMAGE_MODEL,
+    prompt,
+    size,
+    n: 1,
+    response_format: "b64_json",
+  });
+
+  const b64 = img?.data?.[0]?.b64_json || null;
+  return asDataUrlFromB64(b64);
+}
+
+// --- Health ---
+app.get("/", (req, res) => {
+  res.json({ ok: true, service: "aran-api", endpoints: ["/api/generate", "/api/generate-images", "/api/generate-storyboards"] });
 });
+app.get("/health", (req, res) => res.json({ ok: true }));
 
 // ─────────────────────────────────────────────
-//  /api/generate  → beats only (title + frames)
+//  /api/generate → 4–6 beats
+//  Body: { prompt, contentType, references }
+//  Returns: { title, style, frames:[{description}] }
 // ─────────────────────────────────────────────
 app.post("/api/generate", async (req, res) => {
   try {
     const { prompt, contentType, references } = req.body || {};
 
-    if (!prompt || typeof prompt !== "string") {
-      return res.status(400).json({ error: "Missing prompt" });
-    }
+    const userPrompt = safeString(prompt).trim();
+    if (!userPrompt) return res.status(400).json({ error: "Missing prompt" });
 
-    const typeText = contentType || "Any story – let Aran decide";
-    const refsText =
-      Array.isArray(references) && references.length
-        ? references
-            .map(
-              (r) => `${r.title || "Untitled"} (${r.aspect || "general"})`
-            )
-            .join("; ")
-        : "No explicit references.";
+    const typeText = safeString(contentType).trim() || "Any story – let Aran decide";
+    const refsText = referencesToText(references);
 
-    const systemPrompt =
-      "You are ARAN, a story engine that returns clean JSON only. " +
-      'Return strictly valid JSON in this shape: ' +
-      '{ "title": string, "style": string, "frames": [ { "description": string } ] }. ' +
-      "Use around 8–16 beats. No extra text.";
+    const system = `
+You are ARAN, a creative development assistant for film, commercials, and narrative work.
 
-    const userPrompt = `
+You MUST output STRICT JSON ONLY (no markdown, no commentary) matching this schema:
+{
+  "title": "string",
+  "style": "string",
+  "frames": [
+    { "description": "string" }
+  ]
+}
+
+Rules:
+- Return ${MIN_BEATS} to ${MAX_BEATS} beats (MAX ${MAX_BEATS}).
+- Beats are professional treatment beats (no dialogue, no screenplay formatting).
+- Each beat is one short paragraph max. Clean, cinematic, intentional.
+- Avoid filler, repetition, and "student script" vibes.
+- "style" should be a concise visual direction (e.g., “high-contrast night city, handheld energy, premium commercial polish”).
+`.trim();
+
+    const user = `
 Story type: ${typeText}
 References: ${refsText}
 
-User idea:
-${prompt}
-    `.trim();
+Concept:
+${userPrompt}
+
+Now output the JSON.
+`.trim();
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      response_format: { type: "json_object" },
+      model: CHAT_MODEL,
+      temperature: 0.8,
       messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
+        { role: "system", content: system },
+        { role: "user", content: user },
       ],
-      temperature: 0.9,
     });
 
-    const raw = completion.choices?.[0]?.message?.content || "{}";
+    const raw = completion?.choices?.[0]?.message?.content || "";
     let parsed;
     try {
       parsed = JSON.parse(raw);
-    } catch (err) {
-      console.error("[ARAN] /api/generate JSON parse error:", err, raw);
-      return res
-        .status(500)
-        .json({ error: "Failed to parse JSON from OpenAI." });
+    } catch {
+      // If the model returns extra text, try to salvage JSON block
+      const start = raw.indexOf("{");
+      const end = raw.lastIndexOf("}");
+      if (start !== -1 && end !== -1 && end > start) {
+        parsed = JSON.parse(raw.slice(start, end + 1));
+      } else {
+        return res.status(500).json({ error: "Model did not return valid JSON", raw });
+      }
     }
 
-    const title = parsed.title || "Untitled Story";
-    const style =
-      parsed.style ||
-      `${typeText} shaped by ARAN with references: ${refsText}`;
-    const frames =
-      Array.isArray(parsed.frames) && parsed.frames.length
-        ? parsed.frames.map((f) => ({
-            description:
-              typeof f === "string"
-                ? f
-                : (f && f.description) || "",
-          }))
-        : [];
+    const title = safeString(parsed.title).trim() || "Untitled Story";
+    const style = safeString(parsed.style).trim() || "";
+    const frames = normalizeFrames(parsed.frames);
 
-    if (!frames.length) {
-      return res
-        .status(500)
-        .json({ error: "No frames returned from OpenAI." });
-    }
-
-    console.log(
-      `[ARAN] /api/generate returned ${frames.length} frames for "${title}"`
-    );
+    // Enforce minimum: if fewer than MIN_BEATS, return what we have (or you can hard fail).
+    if (!frames.length) return res.status(500).json({ error: "No beats returned" });
 
     res.json({ title, style, frames });
   } catch (err) {
     console.error("[ARAN] /api/generate error:", err);
-    res.status(500).json({ error: "Beat generation failed." });
+    res.status(500).json({ error: "Generate failed" });
   }
 });
 
 // ─────────────────────────────────────────────
-//  /api/generate-storyboards  → B&W boards
-// ─────────────────────────────────────────────
-app.post("/api/generate-storyboards", async (req, res) => {
-  try {
-    const { frames } = req.body || {};
-
-    if (!Array.isArray(frames) || frames.length === 0) {
-      return res.status(400).json({ error: "Missing frames" });
-    }
-
-    const limitedFrames = frames.slice(0, MAX_IMAGE_FRAMES);
-    console.log(
-      `[ARAN] /api/generate-storyboards generating B&W for ${limitedFrames.length} frame(s)`
-    );
-
-    const storyboardPromises = limitedFrames.map(async (frame, index) => {
-      const desc =
-        (frame && frame.description) ||
-        "A cinematic black-and-white storyboard frame.";
-
-   const img = await openai.images.generate({
-  model: "gpt-image-1",
-  prompt: `black and white pencil storyboard sketch... Beat description: ${desc}`,
-  size: "1536x1024",
-  n: 1,
-  response_format: "b64_json",
-});
-
-const b64 = img.data?.[0]?.b64_json || null;
-const url = b64 ? `data:image/png;base64,${b64}` : null;
-return { url };
-
-
-    const storyboards = await Promise.all(storyboardPromises);
-
-    res.json({ storyboards });
-  } catch (err) {
-    console.error("[ARAN] /api/generate-storyboards error:", err);
-    res.status(500).json({
-      error: "Storyboard generation failed.",
-      detail: err?.message || String(err),
-    });
-  }
-});
-
-// ─────────────────────────────────────────────
-//  /api/generate-images  → Color visuals
+//  /api/generate-images → color visuals (or hero image)
+//  Body: { frames:[{description}], style? }
+//  Returns: { images:[{url}] } where url is data:image/png;base64,...
 // ─────────────────────────────────────────────
 app.post("/api/generate-images", async (req, res) => {
   try {
@@ -183,56 +183,80 @@ app.post("/api/generate-images", async (req, res) => {
       return res.status(400).json({ error: "Missing frames" });
     }
 
-    const limitedFrames = frames.slice(0, MAX_IMAGE_FRAMES);
-    console.log(
-      `[ARAN] /api/generate-images generating color for ${limitedFrames.length} frame(s)`
-    );
+    const limited = frames.slice(0, MAX_IMAGE_FRAMES);
+    const styleText = safeString(style).trim();
 
-    const imagePromises = limitedFrames.map(async (frame, index) => {
-      const desc =
-        (frame && frame.description) ||
-        "A cinematic color frame from the story.";
+    const images = [];
+    for (const f of limited) {
+      const desc = typeof f === "string" ? f : safeString(f?.description);
+      const prompt = `
+Create a single cinematic color frame.
+${styleText ? `Style: ${styleText}` : ""}
+Rules:
+- No text.
+- Strong composition, premium film/commercial look.
+- Photoreal or high-end concept art (whichever fits best).
+Scene:
+${desc}
+`.trim();
 
-  const img = await openai.images.generate({
-  model: "gpt-image-1",
-  prompt: `cinematic color concept art: ${desc}`,
-  size: "1536x1024",
-  n: 1,
-  response_format: "b64_json",
-});
-
-const b64 = img.data?.[0]?.b64_json || null;
-const url = b64 ? `data:image/png;base64,${b64}` : null;
-return { url };
-
-
-    const images = await Promise.all(imagePromises);
+      const url = await generateSingleImageDataUrl(prompt);
+      images.push({ url: url || null });
+    }
 
     res.json({ images });
   } catch (err) {
     console.error("[ARAN] /api/generate-images error:", err);
-    res.status(500).json({
-      error: "Image generation failed.",
-      detail: err?.message || String(err),
-    });
+    res.status(500).json({ error: "Image generation failed" });
   }
 });
 
 // ─────────────────────────────────────────────
-//  (Placeholder auth routes so frontend doesn’t break)
+//  /api/generate-storyboards → B&W storyboard sketches
+//  Body: { frames:[{description}] }
+//  Returns: { storyboards:[{url}] } where url is data:image/png;base64,...
 // ─────────────────────────────────────────────
-app.post("/api/auth/signup", (req, res) => {
-  // Placeholder only – real auth can be added later.
-  res.json({ ok: true, mode: "signup-placeholder" });
+app.post("/api/generate-storyboards", async (req, res) => {
+  try {
+    const { frames } = req.body || {};
+
+    if (!Array.isArray(frames) || frames.length === 0) {
+      return res.status(400).json({ error: "Missing frames" });
+    }
+
+    const limited = frames.slice(0, MAX_IMAGE_FRAMES);
+
+    const storyboards = [];
+    for (const f of limited) {
+      const desc = typeof f === "string" ? f : safeString(f?.description);
+      const prompt = `
+RUDIMENTARY BLACK-AND-WHITE STORYBOARD SKETCH.
+Quick director-style pencil drawing.
+Minimal detail. No text. No captions. No borders.
+
+Scene:
+${desc}
+`.trim();
+
+      const url = await generateSingleImageDataUrl(prompt);
+      storyboards.push({ url: url || null });
+    }
+
+    res.json({ storyboards });
+  } catch (err) {
+    console.error("[ARAN] /api/generate-storyboards error:", err);
+    res.status(500).json({ error: "Storyboard generation failed" });
+  }
 });
 
-app.post("/api/auth/login", (req, res) => {
-  // Placeholder only – real auth can be added later.
-  res.json({ ok: true, mode: "login-placeholder" });
-});
+// ─────────────────────────────────────────────
+// Placeholder auth endpoints (kept for compatibility)
+// ─────────────────────────────────────────────
+app.post("/api/auth/signup", (req, res) => res.json({ ok: true, mode: "signup-placeholder" }));
+app.post("/api/auth/login", (req, res) => res.json({ ok: true, mode: "login-placeholder" }));
 
 // ─────────────────────────────────────────────
-//  Start server
+// Start server
 // ─────────────────────────────────────────────
 app.listen(port, () => {
   console.log(`[ARAN] API listening on port ${port}`);
