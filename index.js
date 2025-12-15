@@ -1,239 +1,248 @@
-import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
-import OpenAI from "openai";
+/* =========================
+   ARAN — GLASS UI SYSTEM
+   ========================= */
 
-dotenv.config();
+:root {
+  --bg-dark: #05070e;
+  --glass-white: rgba(255, 255, 255, 0.08);
+  --glass-strong: rgba(255, 255, 255, 0.12);
+  --glass-border: rgba(255, 255, 255, 0.18);
 
-const app = express();
-const port = process.env.PORT || 8080;
+  --neon-blue: #8fd4ff;
+  --neon-blue-soft: rgba(143, 212, 255, 0.35);
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  --text-main: rgba(255, 255, 255, 0.92);
+  --text-muted: rgba(255, 255, 255, 0.6);
 
-const CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || "gpt-4o-mini";
-const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
+  --radius-lg: 26px;
+  --radius-md: 18px;
 
-const MIN_BEATS = 4;
-const MAX_BEATS = 6;
-const MAX_IMAGE_FRAMES = 6;
+  --blur: blur(18px);
 
-app.use(
-  cors({
-    origin: true,
-    methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
-app.use(express.json({ limit: "12mb" }));
+  --shadow-lg: 0 30px 80px rgba(0,0,0,0.65);
+  --shadow-soft: 0 12px 40px rgba(0,0,0,0.45);
 
-// signature header so we can verify responses come from the API
-app.use((req, res, next) => {
-  res.setHeader("x-aran-api", "true");
-  next();
-});
-
-const safeString = (x) => (typeof x === "string" ? x : "");
-
-function referencesToText(references) {
-  if (!Array.isArray(references) || !references.length) return "None.";
-  return references
-    .map((r) => `${safeString(r.title).trim() || "Untitled"} (${safeString(r.aspect).trim() || "general"})`)
-    .join("; ");
+  --font: "Josefin Sans", system-ui, sans-serif;
 }
 
-function normalizeFrames(frames) {
-  if (!Array.isArray(frames)) return [];
-  const cleaned = frames
-    .map((f) => {
-      if (typeof f === "string") return { description: f.trim() };
-      if (f && typeof f === "object") return { description: safeString(f.description).trim() };
-      return { description: "" };
-    })
-    .filter((f) => f.description.length > 0);
+/* RESET */
+* { box-sizing: border-box; }
 
-  return cleaned.slice(0, MAX_BEATS);
+html, body {
+  margin: 0;
+  height: 100%;
+  font-family: var(--font);
+  background: radial-gradient(
+      1200px 900px at 70% 10%,
+      rgba(143,212,255,0.06),
+      transparent 60%
+    ),
+    var(--bg-dark);
+  color: var(--text-main);
 }
 
-function dataUrlFromB64(b64) {
-  return b64 ? `data:image/png;base64,${b64}` : null;
+/* =========================
+   GLOBAL LAYOUT
+   ========================= */
+
+.aran-root {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
-function serializeErr(err) {
-  return {
-    message: err?.message || String(err),
-    name: err?.name,
-    status: err?.status,
-    code: err?.code,
-    type: err?.type,
-    error: err?.error,
-    response: err?.response,
-  };
+.shell {
+  width: 100%;
+  max-width: 1100px;
+  padding: 32px;
 }
 
-/**
- * ✅ IMPORTANT:
- * For gpt-image-1, DO NOT send response_format.
- * It returns base64 (b64_json) by default. :contentReference[oaicite:1]{index=1}
- */
-async function generateSingleImageDataUrl(prompt, size = "1536x1024") {
-  const img = await openai.images.generate({
-    model: IMAGE_MODEL,
-    prompt,
-    size,
-    n: 1,
-    // no response_format here
-  });
-
-  const b64 = img?.data?.[0]?.b64_json || null;
-  return dataUrlFromB64(b64);
+.shell-center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
-// health
-app.get("/", (req, res) => res.json({ ok: true, service: "aran-api" }));
-app.get("/health", (req, res) => res.json({ ok: true }));
+/* =========================
+   PANELS (GLASS)
+   ========================= */
 
-// browser-friendly pings
-app.get("/api/generate", (req, res) => res.json({ ok: true, hint: "POST { prompt, contentType, references }" }));
-app.get("/api/generate-images", (req, res) =>
-  res.json({ ok: true, hint: "POST { frames:[{description}], style? }" })
-);
-app.get("/api/generate-storyboards", (req, res) =>
-  res.json({ ok: true, hint: "POST { frames:[{description}] }" })
-);
-
-// beats: 4–6
-app.post("/api/generate", async (req, res) => {
-  try {
-    const { prompt, contentType, references } = req.body || {};
-    const userPrompt = safeString(prompt).trim();
-    if (!userPrompt) return res.status(400).json({ error: "Missing prompt" });
-
-    const typeText = safeString(contentType).trim() || "Any story – let Aran decide";
-    const refsText = referencesToText(references);
-
-    const system = `
-You are ARAN, a creative development assistant.
-
-Return STRICT JSON ONLY matching:
-{
-  "title": "string",
-  "style": "string",
-  "frames": [{ "description": "string" }]
+.panel,
+.card {
+  background: linear-gradient(
+    180deg,
+    rgba(255,255,255,0.10),
+    rgba(255,255,255,0.04)
+  );
+  backdrop-filter: var(--blur);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-lg);
 }
 
-Rules:
-- Return ${MIN_BEATS} to ${MAX_BEATS} beats (MAX ${MAX_BEATS}).
-- Beats are professional treatment beats (no dialogue, no screenplay formatting).
-- One short paragraph per beat max. No filler.
-- "style" is concise visual direction.
-`.trim();
+.panel-inner,
+.card {
+  padding: 28px;
+}
 
-    const user = `
-Story type: ${typeText}
-References: ${refsText}
+/* =========================
+   HEADERS
+   ========================= */
 
-Concept:
-${userPrompt}
+.header {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  margin-bottom: 24px;
+}
 
-Output JSON now.
-`.trim();
+.aran-logo {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
 
-    const completion = await openai.chat.completions.create({
-      model: CHAT_MODEL,
-      temperature: 0.8,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-    });
+.aran-title {
+  font-size: 24px;
+  letter-spacing: 0.05em;
+}
 
-    const raw = completion?.choices?.[0]?.message?.content || "";
-    let parsed;
+.aran-sub {
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  color: var(--text-muted);
+}
 
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      const start = raw.indexOf("{");
-      const end = raw.lastIndexOf("}");
-      if (start !== -1 && end !== -1 && end > start) parsed = JSON.parse(raw.slice(start, end + 1));
-      else return res.status(500).json({ error: "Model did not return valid JSON", raw });
-    }
+/* =========================
+   INPUTS — GLASS PROMPT
+   ========================= */
 
-    const title = safeString(parsed.title).trim() || "Untitled Story";
-    const style = safeString(parsed.style).trim() || "";
-    const frames = normalizeFrames(parsed.frames);
-    if (!frames.length) return res.status(500).json({ error: "No beats returned" });
+textarea,
+input,
+select {
+  width: 100%;
+  background: linear-gradient(
+    180deg,
+    rgba(0,0,0,0.55),
+    rgba(0,0,0,0.35)
+  );
+  color: white;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--glass-border);
+  padding: 16px;
+  font-family: var(--font);
+  font-size: 15px;
+  backdrop-filter: blur(14px);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+}
 
-    res.json({ title, style, frames });
-  } catch (err) {
-    console.error("[ARAN] /api/generate error:", err);
-    res.status(500).json({ error: "Generate failed", detail: serializeErr(err) });
+textarea::placeholder {
+  color: rgba(255,255,255,0.45);
+}
+
+/* ASK ANYTHING PROMPT LOOK */
+.textarea {
+  min-height: 150px;
+  box-shadow:
+    inset 0 0 20px rgba(143,212,255,0.08),
+    0 0 40px rgba(143,212,255,0.06);
+}
+
+/* =========================
+   DROPDOWN FIX (IMPORTANT)
+   ========================= */
+
+select {
+  appearance: none;
+  cursor: pointer;
+}
+
+select option {
+  background: #0b0e18;
+  color: white;
+}
+
+/* =========================
+   BUTTONS — APPLE NEON GLASS
+   ========================= */
+
+.btn {
+  border-radius: 999px;
+  padding: 12px 22px;
+  background: linear-gradient(
+    180deg,
+    rgba(255,255,255,0.20),
+    rgba(255,255,255,0.08)
+  );
+  border: 1px solid var(--glass-border);
+  color: white;
+  cursor: pointer;
+  backdrop-filter: blur(16px);
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,0.08),
+    0 10px 30px rgba(0,0,0,0.4);
+  transition: all 0.2s ease;
+}
+
+.btn.neon {
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,0.15),
+    0 0 30px rgba(143,212,255,0.35),
+    0 20px 50px rgba(0,0,0,0.6);
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 40px rgba(143,212,255,0.45),
+    0 24px 60px rgba(0,0,0,0.7);
+}
+
+.btn:active {
+  transform: translateY(0);
+}
+
+/* =========================
+   GRID / SPACING FIX
+   ========================= */
+
+.grid,
+.anchor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+@media (max-width: 900px) {
+  .grid,
+  .anchor-grid {
+    grid-template-columns: 1fr;
   }
-});
+}
 
-// color images (hero or per-beat)
-app.post("/api/generate-images", async (req, res) => {
-  try {
-    const { frames, style } = req.body || {};
-    if (!Array.isArray(frames) || !frames.length) return res.status(400).json({ error: "Missing frames" });
+/* =========================
+   HERO IMAGE
+   ========================= */
 
-    const limited = frames.slice(0, MAX_IMAGE_FRAMES);
-    const styleText = safeString(style).trim();
+.hero-img {
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-soft);
+}
 
-    const images = [];
-    for (const f of limited) {
-      const desc = typeof f === "string" ? f : safeString(f?.description);
+/* =========================
+   LOADER (KEEP AS IS)
+   ========================= */
 
-      const prompt = `
-Create a single cinematic color frame.
-${styleText ? `Style: ${styleText}` : ""}
-Rules:
-- No text.
-- Premium film/commercial composition.
-Scene:
-${desc}
-`.trim();
-
-      const url = await generateSingleImageDataUrl(prompt);
-      images.push({ url });
-    }
-
-    res.json({ images });
-  } catch (err) {
-    console.error("[ARAN] /api/generate-images error:", err);
-    res.status(500).json({ error: "Image generation failed", detail: serializeErr(err) });
-  }
-});
-
-// b&w storyboards
-app.post("/api/generate-storyboards", async (req, res) => {
-  try {
-    const { frames } = req.body || {};
-    if (!Array.isArray(frames) || !frames.length) return res.status(400).json({ error: "Missing frames" });
-
-    const limited = frames.slice(0, MAX_IMAGE_FRAMES);
-
-    const storyboards = [];
-    for (const f of limited) {
-      const desc = typeof f === "string" ? f : safeString(f?.description);
-
-      const prompt = `
-RUDIMENTARY BLACK-AND-WHITE STORYBOARD SKETCH.
-Quick director-style pencil drawing. Minimal detail. No text.
-
-Scene:
-${desc}
-`.trim();
-
-      const url = await generateSingleImageDataUrl(prompt);
-      storyboards.push({ url });
-    }
-
-    res.json({ storyboards });
-  } catch (err) {
-    console.error("[ARAN] /api/generate-storyboards error:", err);
-    res.status(500).json({ error: "Storyboard generation failed", detail: serializeErr(err) });
-  }
-});
-
-app.listen(port, () => console.log(`[ARAN] API listening on ${port}`));
+.global-loader {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(12px);
+  display: grid;
+  place-items: center;
+  z-index: 999;
+}
