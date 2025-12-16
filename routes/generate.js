@@ -1,36 +1,19 @@
+import { chatCompletion } from "../utils/openaiClient.js";
 
-import express from "express";
-import { openai } from "../utils/openaiClient.js";
-
-const router = express.Router();
-
-router.post("/", async (req, res) => {
+export default async function generate(req, res) {
   try {
-    const { prompt, contentType, references } = req.body;
+    const { prompt } = req.body || {};
+    if (!prompt) return res.status(400).json({ error: "Missing prompt" });
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "user",
-          content: `Create story beats for: ${prompt}. Return JSON with "frames":[{description:""}].`
-        }
-      ]
-    });
+    const result = await chatCompletion({ prompt });
 
-    const text = completion.choices[0].message.content;
-
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      parsed = { frames: [{ description: text }] };
-    }
-
-    res.json(parsed);
+    // Keep the response shape simple + consistent
+    return res.json({ text: result.text });
   } catch (err) {
-    res.status(500).send("Error generating beats");
+    console.error("Generate error:", err);
+    return res.status(err.status || 500).json({
+      error: err.message || "Generation failed",
+      details: err.details || undefined
+    });
   }
-});
-
-export default router;
+}
