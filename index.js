@@ -1,6 +1,6 @@
 import express from "express";
 import cors from "cors";
-import router from "./router.js"; // SAME FOLDER. THIS IS IMPORTANT.
+import router from "./routes/router.js";
 
 const app = express();
 
@@ -26,13 +26,9 @@ app.options("*", corsMiddleware);
 
 app.use(express.json({ limit: "20mb" }));
 
-app.get("/", (_req, res) => {
-  res.json({ ok: true, service: "aran-api" });
-});
+app.get("/", (_req, res) => res.json({ ok: true, service: "aran-api" }));
 
 app.use("/api", router);
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-  console.log(`Aran API listening on ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Aran API listening on ${PORT}`));
