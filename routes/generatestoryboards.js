@@ -1,29 +1,40 @@
+// routes/generatestoryboards.js
+import { openai, asDataUrlFromB64 } from "../utils/openaiClient.js";
 
-import express from "express";
-import { openai } from "../utils/openaiClient.js";
-
-const router = express.Router();
-
-router.post("/", async (req, res) => {
+export default async function generateStoryboards(req, res) {
   try {
-    const { frames } = req.body;
+    const { prompt, contentType, beats } = req.body || {};
+    if (!prompt) return res.status(400).json({ error: "Missing prompt" });
+    if (!Array.isArray(beats) || beats.length === 0) return res.json({ frames: [] });
 
-    const images = [];
+    const frames = [];
 
-    for (const frame of frames) {
+    for (let i = 0; i < beats.length; i++) {
+      const beat = beats[i];
+
+      const imgPrompt = `
+Black-and-white storyboard frame, pencil/ink concept art.
+No text. High contrast. Simple composition.
+Story: ${prompt}
+Type: ${contentType || ""}
+Beat ${i + 1}: ${beat}
+`;
+
       const img = await openai.images.generate({
         model: "gpt-image-1",
-        prompt: `black and white storyboard, cinematic, pencil-drawn: ${frame.description}`,
-        size: "1024x1024"
+        prompt: imgPrompt,
+        size: "1024x1024",
       });
 
-      images.push({ url: img.data[0].url });
+      const b64 = img?.data?.[0]?.b64_json;
+      const dataUrl = b64 ? asDataUrlFromB64(b64) : null;
+
+      frames.push({ beatIndex: i, dataUrl });
     }
 
-    res.json({ images });
+    return res.json({ frames });
   } catch (err) {
-    res.status(500).send("Error generating storyboards");
+    console.error("generateStoryboards error:", err);
+    return res.status(500).json({ error: "Storyboards failed" });
   }
-});
-
-export default router;
+}
