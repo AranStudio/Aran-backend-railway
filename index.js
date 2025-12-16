@@ -4,7 +4,9 @@ import router from "./routes/router.js";
 
 const app = express();
 
-// 1) Hard allowlist (your real origins)
+/* =========================
+   HARD STOP CORS + PREFLIGHT
+   ========================= */
 const allowedOrigins = new Set([
   "https://www.aran.studio",
   "https://aran.studio",
@@ -12,7 +14,7 @@ const allowedOrigins = new Set([
   "http://localhost:3000",
 ]);
 
-// 2) Always respond to preflight successfully (this prevents 502/edge weirdness)
+// Absolute first middleware: handle OPTIONS ourselves
 app.use((req, res, next) => {
   const origin = req.headers.origin;
 
@@ -20,31 +22,52 @@ app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization"
+    );
   }
 
+  // End preflight immediately so nothing downstream can 502
   if (req.method === "OPTIONS") {
-    // end preflight immediately
     return res.status(204).end();
   }
 
   next();
 });
 
-// 3) CORS middleware for normal requests
-app.use(cors({
-  origin(origin, cb) {
-    if (!origin) return cb(null, true);
-    if (allowedOrigins.has(origin)) return cb(null, true);
-    return cb(null, false);
-  }
-}));
+// Normal CORS for real requests
+app.use(
+  cors({
+    origin(origin, cb) {
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.has(origin)) return cb(null, true);
+      return cb(null, false);
+    },
+  })
+);
 
+/* =========================
+   BODY PARSING
+   ========================= */
 app.use(express.json({ limit: "20mb" }));
 
-app.get("/", (_req, res) => res.json({ ok: true }));
+/* =========================
+   HEALTH CHECK
+   ========================= */
+app.get("/", (_req, res) => {
+  res.json({ ok: true, service: "aran-api" });
+});
 
+/* =========================
+   ROUTES
+   ========================= */
 app.use("/api", router);
 
+/* =========================
+   START SERVER
+   ========================= */
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log("Listening on", PORT));
+app.listen(PORT, () => {
+  console.log(`Aran API listening on ${PORT}`);
+});
