@@ -1,16 +1,26 @@
 // utils/openaiClient.js
 import OpenAI from "openai";
 
-// Named export your routes expect:
+function requireKey() {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) throw new Error("OPENAI_API_KEY is missing on the server");
+  return key;
+}
+
+// Named export used by generatestoryboards.js
 export const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: requireKey(),
 });
 
-// Optional helper if other files want a guard:
-export function assertOpenAIKey() {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is missing on the server environment");
-  }
+// Named export used by generate.js
+export async function chatCompletion({ prompt, model = "gpt-4o-mini" }) {
+  const resp = await openai.chat.completions.create({
+    model,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  // Normalize to your likely expected shape
+  return resp;
 }
 
 export default openai;
