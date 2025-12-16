@@ -11,35 +11,45 @@ const allowedOrigins = new Set([
   "http://localhost:3000",
 ]);
 
+// Handle CORS + preflight early and safely
 app.use((req, res, next) => {
   const origin = req.headers.origin;
+
   if (origin && allowedOrigins.has(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
   }
-  if (req.method === "OPTIONS") return res.status(204).end();
+
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
+
   next();
 });
 
+// Standard CORS middleware (fine to keep)
 app.use(cors());
+
+// Body parsing
 app.use(express.json({ limit: "20mb" }));
 
-// Always respond quickly on root
+// Health check
 app.get("/", (_req, res) => {
-  res.status(200).json({ ok: true, service: "aran-api", ts: Date.now() });
+  res.json({ ok: true, service: "aran-api" });
 });
 
-// Mount API
+// Routes
 app.use("/api", router);
 
-// Basic error handler (so crashes show up cleanly)
+// Error handler (helps logs be readable)
 app.use((err, _req, res, _next) => {
   console.error("Unhandled error:", err);
   res.status(500).json({ error: "Server error" });
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log("listening", PORT));
+app.listen(PORT, () => {
+  console.log("Aran API listening on", PORT);
 });
