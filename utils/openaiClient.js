@@ -7,20 +7,18 @@ function requireKey() {
   return key;
 }
 
-// Named export used by generatestoryboards.js
-export const openai = new OpenAI({
-  apiKey: requireKey(),
-});
+export const openai = new OpenAI({ apiKey: requireKey() });
 
-// Named export used by generate.js
 export async function chatCompletion({ prompt, model = "gpt-4o-mini" }) {
-  const resp = await openai.chat.completions.create({
+  return await openai.chat.completions.create({
     model,
     messages: [{ role: "user", content: prompt }],
+    temperature: 0.7,
   });
+}
 
-  // Normalize to your likely expected shape
-  return resp;
+export function asDataUrlFromB64(b64) {
+  return `data:image/png;base64,${b64}`;
 }
 
 export default openai;
