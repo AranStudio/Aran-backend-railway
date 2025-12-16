@@ -10,16 +10,12 @@ import generateToneImage from "./generateToneImage.js";
 
 const router = express.Router();
 
-// Auth
 router.post("/auth/login", authLogin);
 router.post("/auth/signup", authSignup);
 
-// Generation
 router.post("/generate", generate);
 router.post("/generate-visuals", generateVisuals);
 router.post("/generate-storyboards", generateStoryboards);
-
-// Alias to stop "Cannot POST /api/generate-tone-image"
 router.post("/generate-tone-image", generateToneImage);
 
 export default router;
