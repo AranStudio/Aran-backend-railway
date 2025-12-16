@@ -1,13 +1,9 @@
-// index.js
 import express from "express";
 import cors from "cors";
-import router from "./router.js";
+import router from "./routes/router.js"; // <-- adjust if needed
 
 const app = express();
 
-/* =========================
-   CORS (must be before routes)
-   ========================= */
 const allowedOrigins = new Set([
   "https://www.aran.studio",
   "https://aran.studio",
@@ -30,12 +26,10 @@ app.options("*", corsMiddleware);
 
 app.use(express.json({ limit: "20mb" }));
 
-// Health check
 app.get("/", (_req, res) => {
   res.json({ ok: true, service: "aran-api" });
 });
 
-// Mount all API routes at /api
 app.use("/api", router);
 
 const PORT = process.env.PORT || 8080;
