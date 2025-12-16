@@ -41,6 +41,5 @@ app.use((err, _req, res, _next) => {
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-  console.log("Aran API listening on", PORT);
+app.listen(PORT, () => console.log("listening", PORT));
 });
