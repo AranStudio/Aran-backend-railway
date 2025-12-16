@@ -4,9 +4,6 @@ import router from "./routes/router.js";
 
 const app = express();
 
-/* =========================
-   HARD STOP CORS + PREFLIGHT
-   ========================= */
 const allowedOrigins = new Set([
   "https://www.aran.studio",
   "https://aran.studio",
@@ -14,60 +11,36 @@ const allowedOrigins = new Set([
   "http://localhost:3000",
 ]);
 
-// Absolute first middleware: handle OPTIONS ourselves
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-
   if (origin && allowedOrigins.has(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      "Content-Type, Authorization"
-    );
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
   }
-
-  // End preflight immediately so nothing downstream can 502
-  if (req.method === "OPTIONS") {
-    return res.status(204).end();
-  }
-
+  if (req.method === "OPTIONS") return res.status(204).end();
   next();
 });
 
-// Normal CORS for real requests
-app.use(
-  cors({
-    origin(origin, cb) {
-      if (!origin) return cb(null, true);
-      if (allowedOrigins.has(origin)) return cb(null, true);
-      return cb(null, false);
-    },
-  })
-);
-
-/* =========================
-   BODY PARSING
-   ========================= */
+app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 
-/* =========================
-   HEALTH CHECK
-   ========================= */
+// Always respond quickly on root
 app.get("/", (_req, res) => {
-  res.json({ ok: true, service: "aran-api" });
+  res.status(200).json({ ok: true, service: "aran-api", ts: Date.now() });
 });
 
-/* =========================
-   ROUTES
-   ========================= */
+// Mount API
 app.use("/api", router);
 
-/* =========================
-   START SERVER
-   ========================= */
+// Basic error handler (so crashes show up cleanly)
+app.use((err, _req, res, _next) => {
+  console.error("Unhandled error:", err);
+  res.status(500).json({ error: "Server error" });
+});
+
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`Aran API listening on ${PORT}`);
+  console.log("Aran API listening on", PORT);
 });
