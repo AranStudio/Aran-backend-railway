@@ -10,7 +10,8 @@
     "express": "^4.19.2",
     "cors": "^2.8.5",
     "@supabase/supabase-js": "^2.45.4",
-    "openai": "^4.30.0"
+    "openai": "^4.30.0",
+    "stripe": "^16.4.0"
   },
   "engines": {
     "node": ">=18"
