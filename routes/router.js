@@ -8,6 +8,7 @@ import generateVisuals from "./generateVisuals.js";
 import generateStoryboards from "./generatestoryboards.js";
 import generateToneImage from "./generateToneImage.js";
 import createCheckoutSession from "./createCheckoutSession.js";
+import evaluateBeats from "./evaluateBeats.js";
 
 const router = express.Router();
 
@@ -23,5 +24,8 @@ router.post("/generate", generate);
 router.post("/generate-visuals", generateVisuals);
 router.post("/generate-storyboards", generateStoryboards);
 router.post("/generate-tone-image", generateToneImage);
+
+// Beat evaluation (node tree)
+router.post("/evaluate-beats", evaluateBeats);
 
 export default router;
