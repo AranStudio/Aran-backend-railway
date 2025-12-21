@@ -1,4 +1,4 @@
-// routes/generatestoryboards.js
+// routes/generateStoryboards.js
 import { openai, asDataUrlFromB64 } from "../utils/openaiClient.js";
 
 function toClientError(err, fallback = "Storyboard request failed") {
