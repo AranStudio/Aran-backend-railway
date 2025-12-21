@@ -2,13 +2,19 @@
 import { chatCompletion } from "../utils/openaiClient.js";
 
 function safeJsonParse(str) {
-  try { return JSON.parse(str); } catch { return null; }
+  try {
+    return JSON.parse(str);
+  } catch {
+    return null;
+  }
 }
 
 export default async function generate(req, res) {
   try {
     const { prompt, contentType, styleHint, reimagine } = req.body || {};
-    if (!prompt) return res.status(400).json({ error: "Missing prompt" });
+    if (!prompt || !String(prompt).trim()) {
+      return res.status(400).json({ error: "Missing prompt" });
+    }
 
     const system = `
 Return ONLY valid JSON with this exact shape:
@@ -29,27 +35,26 @@ Reimagine: ${Boolean(reimagine)}
 Generate a short title + 6 story beats.
 `;
 
-    const completion = await chatCompletion({
+    const out = await chatCompletion({
       prompt: `${system}\n\n${user}`,
       model: "gpt-4o-mini",
     });
 
-    const text = completion?.choices?.[0]?.message?.content?.trim() || "";
-    const parsed = safeJsonParse(text);
+    const parsed = safeJsonParse(out.text);
 
     const title =
-      (parsed?.title && String(parsed.title)) ||
-      "Untitled";
+      (parsed?.title && String(parsed.title)) || "Untitled";
 
     const beats =
       Array.isArray(parsed?.beats)
         ? parsed.beats.map((b) => String(b)).filter(Boolean)
         : [];
 
-    // Always return the shape your frontend expects:
     return res.json({ title, beats });
   } catch (err) {
     console.error("generate error:", err);
-    return res.status(500).json({ error: "Error generating beats" });
+    return res.status(err.status || 500).json({
+      error: err.message || "Error generating beats",
+    });
   }
 }
