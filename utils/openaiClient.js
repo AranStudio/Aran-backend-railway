@@ -1,3 +1,4 @@
+// utils/openaiClient.js
 import OpenAI from "openai";
 
 /* -------------------- ENV -------------------- */
@@ -15,8 +16,8 @@ export const openai = new OpenAI({
 
 /* -------------------- TEXT GENERATION -------------------- */
 /**
- * Unified text completion helper
- * (safe for outlines, beats, analysis)
+ * Uses the modern Responses API correctly.
+ * Returns a plain text string.
  */
 export async function chatCompletion({
   prompt,
@@ -24,29 +25,35 @@ export async function chatCompletion({
   temperature = 0.7,
 }) {
   try {
-    const res = await openai.responses.create({
+    const r = await openai.responses.create({
       model,
       input: [
         {
           role: "user",
-          content: [{ type: "text", text: prompt }],
+          content: [
+            {
+              type: "input_text",
+              text: String(prompt || ""),
+            },
+          ],
         },
       ],
       temperature,
     });
 
     return {
-      choices: [
-        {
-          message: {
-            content: res.output_text,
-          },
-        },
-      ],
+      text: r.output_text || "",
+      raw: r,
     };
   } catch (err) {
-    console.error("[OpenAI text error]", err);
-    throw normalizeOpenAIError(err, "Text generation failed");
+    console.error("[OpenAI TEXT ERROR]", err);
+    const e = new Error(
+      err?.error?.message ||
+      err?.message ||
+      "Text generation failed"
+    );
+    e.status = err?.status || 500;
+    throw e;
   }
 }
 
@@ -54,26 +61,6 @@ export async function chatCompletion({
 export function asDataUrlFromB64(b64) {
   if (!b64) return null;
   return `data:image/png;base64,${b64}`;
-}
-
-/* -------------------- ERROR NORMALIZATION -------------------- */
-function normalizeOpenAIError(err, fallback) {
-  const status =
-    err?.status ||
-    err?.response?.status ||
-    err?.error?.status ||
-    500;
-
-  const message =
-    err?.error?.message ||
-    err?.response?.data?.error?.message ||
-    err?.message ||
-    fallback ||
-    "OpenAI request failed";
-
-  const e = new Error(message);
-  e.status = status;
-  return e;
 }
 
 export default openai;
