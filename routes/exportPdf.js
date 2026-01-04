@@ -14,9 +14,8 @@ function decodeDataUrlImage(dataUrl) {
   if (!dataUrl || typeof dataUrl !== "string") return null;
   const m = dataUrl.match(/^data:image\/(png|jpeg|jpg);base64,(.+)$/i);
   if (!m) return null;
-  const b64 = m[2];
   try {
-    return Buffer.from(b64, "base64");
+    return Buffer.from(m[2], "base64");
   } catch {
     return null;
   }
@@ -25,30 +24,36 @@ function decodeDataUrlImage(dataUrl) {
 export default async function exportPdf(req, res) {
   try {
     const body = req.body || {};
-    const title = body.title || "Aran Deck";
-    const contentType = body.contentType || body.type || "";
-    const prompt = body.prompt || "";
-    const beats = Array.isArray(body.beats) ? body.beats : [];
-    const beatTitles = Array.isArray(body.beatTitles) ? body.beatTitles : [];
-    const toneImage = body.toneImage || null;
-    const visuals = Array.isArray(body.visuals) ? body.visuals : [];
-    const storyboards = Array.isArray(body.storyboards) ? body.storyboards : [];
+
+    // ✅ Support frontend shape: { deck: payload, saveToAccount: true/false }
+    const deck = body.deck && typeof body.deck === "object" ? body.deck : null;
+    const src = deck || body;
+
+    const title = src.title || "Aran Deck";
+    const contentType = src.contentType || src.type || "";
+    const prompt = src.prompt || "";
+
+    const beats = Array.isArray(src.beats) ? src.beats : [];
+    const beatTitles = Array.isArray(src.beatTitles) ? src.beatTitles : [];
+
+    const toneImage = src.toneImage || src.tone_image || null;
+    const visuals = Array.isArray(src.visuals) ? src.visuals : [];
+    const storyboards = Array.isArray(src.storyboards) ? src.storyboards : [];
 
     const filename = `${safeFilename(title)}.pdf`;
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
 
-    const doc = new PDFDocument({ size: "LETTER", margin: 48 });
+    const doc = new PDFDocument({ autoFirstPage: true, margin: 48 });
     doc.pipe(res);
 
-    doc.fontSize(22).text(title, { align: "left" });
+    // Cover
+    doc.fontSize(22).text(String(title), { align: "left" });
+    doc.moveDown(0.5);
     if (contentType) {
-      doc.moveDown(0.25);
       doc.fontSize(12).text(String(contentType), { align: "left" });
     }
-
     if (prompt) {
       doc.moveDown();
       doc.fontSize(12).text("Prompt", { underline: true });
@@ -75,36 +80,71 @@ export default async function exportPdf(req, res) {
 
       for (let i = 0; i < beats.length; i++) {
         const b = beats[i] || {};
-        const heading = beatTitles[i] || b.title || b.heading || `Beat ${i + 1}`;
-        const txt = b.text || b.description || b.body || b.content || (typeof b === "string" ? b : "");
-        doc.fontSize(12).text(`${i + 1}. ${heading}`);
+        const beatTitle = beatTitles[i] || b.title || `Beat ${i + 1}`;
+        const beatText = b.text || b.body || b.description || "";
+
+        doc.fontSize(12).text(String(beatTitle), { continued: false });
         doc.moveDown(0.25);
-        doc.fontSize(10).text(String(txt || ""), { lineGap: 3 });
-        doc.moveDown();
-        if (doc.y > 720) doc.addPage();
+        if (beatText) {
+          doc.fontSize(10).text(String(beatText), { lineGap: 3 });
+        }
+        if (i !== beats.length - 1) doc.moveDown();
       }
     }
 
-    const imgCandidates = []
-      .concat(storyboards || [])
-      .concat(visuals || [])
-      .map((v) => v?.dataUrl || v?.image || v?.url || v)
-      .filter(Boolean);
-
-    const imgs = imgCandidates.map(decodeDataUrlImage).filter(Boolean).slice(0, 6);
-
-    if (imgs.length) {
+    if (visuals.length) {
       doc.addPage();
-      doc.fontSize(14).text("Frames", { underline: true });
+      doc.fontSize(14).text("Visuals", { underline: true });
       doc.moveDown();
-      for (let i = 0; i < imgs.length; i++) {
-        try {
-          doc.image(imgs[i], { fit: [520, 520], align: "center" });
-          doc.moveDown();
-          if (i !== imgs.length - 1) doc.addPage();
-        } catch {
-          doc.fontSize(10).text("(Couldn't embed an image)");
+
+      for (let i = 0; i < visuals.length; i++) {
+        const v = visuals[i] || {};
+        const caption = v.caption || v.prompt || v.title || `Visual ${i + 1}`;
+        const img = v.image || v.dataUrl || v.url || null;
+
+        doc.fontSize(12).text(String(caption));
+        doc.moveDown(0.25);
+
+        const buf = decodeDataUrlImage(img);
+        if (buf) {
+          try {
+            doc.image(buf, { fit: [520, 520], align: "center" });
+          } catch {
+            doc.fontSize(10).text("(Couldn't embed an image)");
+          }
+        } else if (typeof img === "string" && img) {
+          doc.fontSize(9).text(String(img));
         }
+
+        if (i !== visuals.length - 1) doc.addPage();
+      }
+    }
+
+    if (storyboards.length) {
+      doc.addPage();
+      doc.fontSize(14).text("Storyboards", { underline: true });
+      doc.moveDown();
+
+      for (let i = 0; i < storyboards.length; i++) {
+        const s = storyboards[i] || {};
+        const caption = s.caption || s.prompt || s.title || `Storyboard ${i + 1}`;
+        const img = s.image || s.dataUrl || s.url || null;
+
+        doc.fontSize(12).text(String(caption));
+        doc.moveDown(0.25);
+
+        const buf = decodeDataUrlImage(img);
+        if (buf) {
+          try {
+            doc.image(buf, { fit: [520, 520], align: "center" });
+          } catch {
+            doc.fontSize(10).text("(Couldn't embed an image)");
+          }
+        } else if (typeof img === "string" && img) {
+          doc.fontSize(9).text(String(img));
+        }
+
+        if (i !== storyboards.length - 1) doc.addPage();
       }
     }
 
