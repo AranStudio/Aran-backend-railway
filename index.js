@@ -49,6 +49,14 @@ const isAllowedOrigin = (origin) => {
   // Allow any aran.studio subdomain (covers preview URLs, custom ports, etc.)
   if (parsed.hostname === "aran.studio" || parsed.hostname.endsWith(".aran.studio")) return true;
 
+  // Broad localhost allowance for dev convenience (any port, ipv4/ipv6)
+  if (
+    parsed.hostname === "localhost" ||
+    parsed.hostname === "127.0.0.1" ||
+    parsed.hostname === "::1"
+  )
+    return true;
+
   return false;
 };
 
