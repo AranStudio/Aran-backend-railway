@@ -16,8 +16,7 @@ export const openai = new OpenAI({
 
 /* -------------------- TEXT GENERATION -------------------- */
 /**
- * Uses the modern Responses API correctly.
- * Returns a plain text string.
+ * Uses standard chat completions and returns a plain text string.
  */
 export async function chatCompletion({
   prompt,
@@ -25,25 +24,20 @@ export async function chatCompletion({
   temperature = 0.7,
 }) {
   try {
-    const r = await openai.responses.create({
+    const completion = await openai.chat.completions.create({
       model,
-      input: [
+      messages: [
         {
           role: "user",
-          content: [
-            {
-              type: "text",
-              text: String(prompt || ""),
-            },
-          ],
+          content: String(prompt || ""),
         },
       ],
       temperature,
     });
 
     return {
-      text: getTextFromResponse(r),
-      raw: r,
+      text: getTextFromChatCompletion(completion),
+      raw: completion,
     };
   } catch (err) {
     console.error("[OpenAI TEXT ERROR]", err);
@@ -57,17 +51,12 @@ export async function chatCompletion({
   }
 }
 
-function getTextFromResponse(r) {
-  if (!r) return "";
-  if (r.output_text) return String(r.output_text);
+function getTextFromChatCompletion(completion) {
+  if (!completion) return "";
 
-  const content = r.output?.[0]?.content;
-  if (Array.isArray(content)) {
-    for (const part of content) {
-      if (typeof part?.text === "string" && part.text.trim()) {
-        return part.text;
-      }
-    }
+  const message = completion.choices?.[0]?.message;
+  if (typeof message?.content === "string" && message.content.trim()) {
+    return message.content;
   }
 
   return "";
