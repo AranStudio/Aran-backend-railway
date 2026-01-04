@@ -12,20 +12,33 @@ const app = express();
  * - localhost dev
  * - optional extra origins via env (comma separated)
  */
-const allowedOrigins = new Set([
+const staticAllowedOrigins = [
   "https://www.aran.studio",
   "https://aran.studio",
   "http://localhost:5173",
-  "http://localhost:3000",
+  "http://localhost:3000"
+];
+
+const allowedOrigins = new Set([
+  ...staticAllowedOrigins,
   ...(process.env.WEB_ORIGINS ? process.env.WEB_ORIGINS.split(",").map(s => s.trim()).filter(Boolean) : [])
 ]);
+
+const isAllowedOrigin = origin => {
+  if (allowedOrigins.has(origin)) return true;
+
+  // Allow any subdomain of aran.studio (e.g., preview links)
+  if (origin?.endsWith(".aran.studio")) return true;
+
+  return false;
+};
 
 const corsOptions = {
   origin: (origin, callback) => {
     // Allow non-browser clients (curl/postman) that may not send Origin
     if (!origin) return callback(null, true);
 
-    if (allowedOrigins.has(origin)) return callback(null, true);
+    if (isAllowedOrigin(origin)) return callback(null, true);
 
     // Helpful log so you immediately see the blocked origin in Railway logs
     console.warn("CORS blocked origin:", origin);
@@ -33,7 +46,10 @@ const corsOptions = {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  // Allow any request headers so preflight succeeds even if the frontend adds more
+  // (e.g., Supabase, Stripe, or future auth headers)
+  allowedHeaders: "*",
+  maxAge: 86400
 };
 
 // ✅ Apply CORS BEFORE everything else
