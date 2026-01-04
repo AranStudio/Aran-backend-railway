@@ -20,19 +20,35 @@ export const openai = new OpenAI({
  */
 export async function chatCompletion({
   prompt,
+  system,
+  messages,
   model = "gpt-4o-mini",
   temperature = 0.7,
+  responseFormat,
+  maxTokens,
 }) {
   try {
+    const finalMessages = Array.isArray(messages) && messages.length
+      ? messages
+      : [
+          system
+            ? {
+                role: "system",
+                content: String(system || ""),
+              }
+            : null,
+          {
+            role: "user",
+            content: String(prompt || ""),
+          },
+        ].filter(Boolean);
+
     const completion = await openai.chat.completions.create({
       model,
-      messages: [
-        {
-          role: "user",
-          content: String(prompt || ""),
-        },
-      ],
+      messages: finalMessages,
       temperature,
+      ...(responseFormat ? { response_format: responseFormat } : {}),
+      ...(maxTokens ? { max_tokens: maxTokens } : {}),
     });
 
     return {
@@ -54,10 +70,19 @@ export async function chatCompletion({
 function getTextFromChatCompletion(completion) {
   if (!completion) return "";
 
-  const message = completion.choices?.[0]?.message;
-  if (typeof message?.content === "string" && message.content.trim()) {
-    return message.content;
-  }
+  const content = completion.choices?.[0]?.message?.content;
+
+  if (typeof content === "string" && content.trim()) return content;
+
+  if (Array.isArray(content))
+    return content
+      .map((part) => {
+        if (typeof part?.text === "string") return part.text;
+        if (typeof part === "string") return part;
+        return "";
+      })
+      .filter(Boolean)
+      .join("");
 
   return "";
 }
