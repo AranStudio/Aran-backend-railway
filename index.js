@@ -21,14 +21,33 @@ const staticAllowedOrigins = [
 
 const allowedOrigins = new Set([
   ...staticAllowedOrigins,
-  ...(process.env.WEB_ORIGINS ? process.env.WEB_ORIGINS.split(",").map(s => s.trim()).filter(Boolean) : [])
+  ...(process.env.WEB_ORIGINS
+    ? process.env.WEB_ORIGINS.split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : []),
 ]);
 
-const isAllowedOrigin = origin => {
-  if (allowedOrigins.has(origin)) return true;
+const parseOrigin = (origin) => {
+  try {
+    return new URL(origin);
+  } catch {
+    return null;
+  }
+};
 
-  // Allow any subdomain of aran.studio (e.g., preview links)
-  if (origin?.endsWith(".aran.studio")) return true;
+const isAllowedOrigin = (origin) => {
+  const parsed = parseOrigin(origin);
+  if (!parsed) return false;
+
+  // Normalize to protocol + host (includes port if present)
+  const normalizedOrigin = `${parsed.protocol}//${parsed.host}`;
+
+  // Explicit allow-list entries (including env-provided values)
+  if (allowedOrigins.has(normalizedOrigin)) return true;
+
+  // Allow any aran.studio subdomain (covers preview URLs, custom ports, etc.)
+  if (parsed.hostname === "aran.studio" || parsed.hostname.endsWith(".aran.studio")) return true;
 
   return false;
 };
