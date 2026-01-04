@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import router from "./routes/router.js";
@@ -16,7 +17,8 @@ const staticAllowedOrigins = [
   "https://www.aran.studio",
   "https://aran.studio",
   "http://localhost:5173",
-  "http://localhost:3000"
+  "http://localhost:3000",
+  "http://localhost:8080",
 ];
 
 const allowedOrigins = new Set([
@@ -37,59 +39,24 @@ const parseOrigin = (origin) => {
 };
 
 const isAllowedOrigin = (origin) => {
-  const parsed = parseOrigin(origin);
-  if (!parsed) return false;
-
-  // Normalize to protocol + host (includes port if present)
-  const normalizedOrigin = `${parsed.protocol}//${parsed.host}`;
-
-  // Explicit allow-list entries (including env-provided values)
-  if (allowedOrigins.has(normalizedOrigin)) return true;
-
-  // Allow any aran.studio subdomain (covers preview URLs, custom ports, etc.)
-  if (parsed.hostname === "aran.studio" || parsed.hostname.endsWith(".aran.studio")) return true;
-
-  // Broad localhost allowance for dev convenience (any port, ipv4/ipv6)
-  if (
-    parsed.hostname === "localhost" ||
-    parsed.hostname === "127.0.0.1" ||
-    parsed.hostname === "::1"
-  )
-    return true;
-
-  return false;
+  if (!origin) return true; // allow server-to-server / curl
+  const u = parseOrigin(origin);
+  if (!u) return false;
+  return allowedOrigins.has(`${u.protocol}//${u.host}`);
 };
 
-const corsOptions = {
-  origin: (origin, callback) => {
-    // Allow non-browser clients (curl/postman) that may not send Origin
-    if (!origin) return callback(null, true);
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (isAllowedOrigin(origin)) return cb(null, true);
+      return cb(new Error(`CORS blocked origin: ${origin}`));
+    },
+    credentials: true,
+  })
+);
 
-    if (isAllowedOrigin(origin)) return callback(null, true);
+app.use(express.json({ limit: "20mb" }));
 
-    // Helpful log so you immediately see the blocked origin in Railway logs
-    console.warn("CORS blocked origin:", origin);
-    return callback(null, false);
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  // Allow any request headers so preflight succeeds even if the frontend adds more
-  // (e.g., Supabase, Stripe, or future auth headers)
-  allowedHeaders: "*",
-  maxAge: 86400
-};
-
-// ✅ Apply CORS BEFORE everything else
-app.use(cors(corsOptions));
-
-// ✅ Explicitly handle ALL preflight requests
-app.options("*", cors(corsOptions));
-
-// Body parsing
-app.use(express.json({ limit: "25mb" }));
-app.use(express.urlencoded({ extended: true, limit: "25mb" }));
-
-// Routes
 app.use("/api", router);
 
 // Health check (nice for Railway)
