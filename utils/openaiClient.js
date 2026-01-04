@@ -32,7 +32,7 @@ export async function chatCompletion({
           role: "user",
           content: [
             {
-              type: "input_text",
+              type: "text",
               text: String(prompt || ""),
             },
           ],
@@ -42,7 +42,7 @@ export async function chatCompletion({
     });
 
     return {
-      text: r.output_text || "",
+      text: getTextFromResponse(r),
       raw: r,
     };
   } catch (err) {
@@ -55,6 +55,22 @@ export async function chatCompletion({
     e.status = err?.status || 500;
     throw e;
   }
+}
+
+function getTextFromResponse(r) {
+  if (!r) return "";
+  if (r.output_text) return String(r.output_text);
+
+  const content = r.output?.[0]?.content;
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      if (typeof part?.text === "string" && part.text.trim()) {
+        return part.text;
+      }
+    }
+  }
+
+  return "";
 }
 
 /* -------------------- IMAGE HELPERS -------------------- */
