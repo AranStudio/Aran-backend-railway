@@ -74,15 +74,19 @@ function getTextFromChatCompletion(completion) {
 
   if (typeof content === "string" && content.trim()) return content;
 
+  const partToText = (part) => {
+    if (typeof part?.text === "string") return part.text;
+    if (typeof part?.text?.value === "string") return part.text.value;
+    if (typeof part === "string") return part;
+    return "";
+  };
+
   if (Array.isArray(content))
-    return content
-      .map((part) => {
-        if (typeof part?.text === "string") return part.text;
-        if (typeof part === "string") return part;
-        return "";
-      })
-      .filter(Boolean)
-      .join("");
+    return content.map(partToText).filter(Boolean).join("");
+
+  // Some responses may return a single content part object instead of an array
+  const fallback = partToText(content);
+  if (fallback.trim()) return fallback;
 
   return "";
 }
