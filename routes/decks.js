@@ -1,7 +1,6 @@
 // routes/decks.js
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
-
 import { normalizeDeckPayload } from "../utils/deckFormatter.js";
 
 const router = express.Router();
@@ -11,33 +10,32 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const SUPABASE_SERVICE_ROLE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
 
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.warn("Missing SUPABASE_URL or SUPABASE_ANON_KEY in env.");
+}
+
+// Auth client (verify bearer token)
 const supabaseAuth = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
 });
 
+// Service client (bypass RLS) if available
 const supabaseService = SUPABASE_SERVICE_ROLE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     })
   : null;
 
+// Token-scoped client (respects RLS, uses auth.uid())
 function supabaseUserDb(accessToken) {
-  // Use the user's JWT when a service role key isn't configured.
-  // This keeps deck saving working even if Railway/Vercel env vars are missing,
-  // as long as your Supabase RLS policies permit user_id = auth.uid().
   return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-    global: {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
   });
 }
 
 function dbForReq(req) {
-  if (supabaseService) return supabaseService;
-  return supabaseUserDb(req.accessToken);
+  return supabaseService || supabaseUserDb(req.accessToken);
 }
 
 async function requireUser(req, res, next) {
@@ -62,6 +60,7 @@ router.get("/", requireUser, async (req, res) => {
   try {
     const userId = req.user.id;
     const db = dbForReq(req);
+
     const { data, error } = await db
       .from("decks")
       .select("id,title,content,created_at,export_pdf_url,prompt")
@@ -80,8 +79,8 @@ router.get("/:id", requireUser, async (req, res) => {
   try {
     const userId = req.user.id;
     const deckId = req.params.id;
-
     const db = dbForReq(req);
+
     const { data, error } = await db
       .from("decks")
       .select("id,title,content,created_at,export_pdf_url,prompt")
@@ -101,6 +100,7 @@ router.post("/save", requireUser, async (req, res) => {
   try {
     const userId = req.user.id;
     const db = dbForReq(req);
+
     const body = req.body || {};
     const src = body.deck && typeof body.deck === "object" ? body.deck : body;
     const normalized = normalizeDeckPayload(src);
@@ -111,13 +111,11 @@ router.post("/save", requireUser, async (req, res) => {
       user_id: userId,
       title: normalized.title || "Untitled",
       prompt: normalized.prompt || "",
-      export_pdf_url: src.export_pdf_url || null,
+      export_pdf_url: src.export_pdf_url || body.export_pdf_url || null,
       content: { ...normalized },
     };
 
-    // If an id is provided, update the existing row *for this user only*.
-    // Avoid a raw upsert on primary key which could overwrite other users' rows
-    // when using a service role key.
+    // Prefer update-then-insert to avoid cross-user overwrite with service key
     if (id) {
       const { data: updated, error: updateError } = await db
         .from("decks")
@@ -127,7 +125,6 @@ router.post("/save", requireUser, async (req, res) => {
         .select("id,title,content,created_at,export_pdf_url,prompt")
         .single();
 
-      // If update didn't find a row, fall back to insert.
       if (!updateError && updated) return res.json({ ok: true, deck: updated });
     }
 
@@ -136,6 +133,7 @@ router.post("/save", requireUser, async (req, res) => {
       .insert(row)
       .select("id,title,content,created_at,export_pdf_url,prompt")
       .single();
+
     if (error) throw error;
     return res.json({ ok: true, deck: data });
   } catch (e) {
@@ -149,7 +147,6 @@ router.post("/:id/share", requireUser, async (req, res) => {
     const userId = req.user.id;
     const deckId = req.params.id;
     const { shared = true } = req.body || {};
-
     const db = dbForReq(req);
 
     const { data: existing, error: fetchError } = await db
@@ -173,7 +170,6 @@ router.post("/:id/share", requireUser, async (req, res) => {
       .single();
 
     if (error) throw error;
-
     return res.json({ ok: true, deck: data });
   } catch (e) {
     console.error("share deck error:", e);
@@ -185,8 +181,8 @@ router.delete("/:id", requireUser, async (req, res) => {
   try {
     const userId = req.user.id;
     const deckId = req.params.id;
-
     const db = dbForReq(req);
+
     const { error } = await db.from("decks").delete().eq("user_id", userId).eq("id", deckId);
     if (error) throw error;
     return res.json({ ok: true });
