@@ -34,6 +34,28 @@ function normalizeVisualEntry(entry, index, prefix = "Visual") {
   };
 }
 
+function normalizeKeyedImagesMap(map, prefix) {
+  // Frontend currently stores visuals/storyboards as an object keyed by beat index:
+  //   { 0: "data:image/...", 1: "data:image/..." }
+  // Convert that into a stable array for exports + DB normalization.
+  if (!map || typeof map !== "object" || Array.isArray(map)) return [];
+
+  const keys = Object.keys(map)
+    .map((k) => ({ k, n: Number(k) }))
+    .sort((a, b) =>
+      Number.isFinite(a.n) && Number.isFinite(b.n) ? a.n - b.n : a.k.localeCompare(b.k)
+    );
+
+  const out = [];
+  for (let i = 0; i < keys.length; i++) {
+    const { k, n } = keys[i];
+    const v = map[k];
+    const idx = Number.isFinite(n) ? n : i;
+    out.push(normalizeVisualEntry(v, idx, prefix));
+  }
+  return out;
+}
+
 function normalizeSuggestion(entry) {
   if (!entry) return null;
   if (typeof entry === "string") return { text: entry.trim() };
@@ -68,8 +90,13 @@ export function normalizeDeckPayload(input = {}) {
   const beatTitles = Array.isArray(src.beatTitles) ? src.beatTitles : [];
   const scenes = Array.isArray(src.scenes) ? src.scenes : [];
   const shots = Array.isArray(src.shots) ? src.shots : [];
-  const visuals = Array.isArray(src.visuals) ? src.visuals : [];
-  const storyboards = Array.isArray(src.storyboards) ? src.storyboards : [];
+
+  // ✅ Handle both array AND object-map forms
+  const visuals = Array.isArray(src.visuals) ? src.visuals : normalizeKeyedImagesMap(src.visuals, "Visual");
+  const storyboards = Array.isArray(src.storyboards)
+    ? src.storyboards
+    : normalizeKeyedImagesMap(src.storyboards, "Storyboard");
+
   const suggestions = Array.isArray(src.suggestions) ? src.suggestions : [];
 
   const normalized = {
