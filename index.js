@@ -55,7 +55,9 @@ app.use(
   })
 );
 
-app.use(express.json({ limit: "20mb" }));
+// Deck payloads can include base64 images (tone/visuals/storyboards) which can get large.
+// 80mb keeps exports/saves reliable while still being a reasonable ceiling.
+app.use(express.json({ limit: process.env.JSON_LIMIT || "80mb" }));
 
 app.use("/api", router);
 
