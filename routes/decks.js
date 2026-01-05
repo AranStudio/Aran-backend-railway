@@ -74,15 +74,19 @@ router.get("/:id", requireUser, async (req, res) => {
 router.post("/save", requireUser, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { id, title, prompt, export_pdf_url, content } = req.body || {};
+    const body = req.body || {};
+    const deck = body.deck && typeof body.deck === "object" ? body.deck : null;
+
+    const src = deck || body;
+    const { id, title, prompt, export_pdf_url, content } = src;
 
     const row = {
       ...(id ? { id } : {}),
       user_id: userId,
-      title: title || content?.title || "Untitled",
-      prompt: prompt || content?.prompt || "",
+      title: title || content?.title || src?.title || "Untitled",
+      prompt: prompt || content?.prompt || src?.prompt || "",
       export_pdf_url: export_pdf_url || null,
-      content: content || {},
+      content: content || src?.content || src || {},
     };
 
     if (id) {
