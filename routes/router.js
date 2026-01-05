@@ -13,6 +13,7 @@ import exportProject from "./export.js";
 import exportPdf from "./exportPdf.js";
 import exportImage from "./exportImage.js";
 import exportOptions from "./exportOptions.js";
+import sharedDeck from "./sharedDeck.js";
 
 import decksRouter from "./decks.js";
 
@@ -42,6 +43,7 @@ router.get("/export/options", exportOptions);
 router.post("/export", exportProject);
 router.post("/export/pdf", exportPdf);
 router.post("/export/image", exportImage);
+router.get("/share/:code", sharedDeck);
 
 // Beat evaluation (node tree)
 router.post("/evaluate-beats", evaluateBeats);
