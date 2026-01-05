@@ -2,6 +2,7 @@
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
 import { normalizeDeckPayload } from "../utils/deckFormatter.js";
+import { buildShareUrl, shareEmailTemplate } from "../utils/shareLink.js";
 
 const router = express.Router();
 
@@ -38,6 +39,14 @@ function dbForReq(req) {
   return supabaseService || supabaseUserDb(req.accessToken);
 }
 
+function decorateShareMeta(row) {
+  if (!row?.content) return row;
+  const normalized = normalizeDeckPayload(row.content);
+  const shareUrl = buildShareUrl(normalized.shareCode);
+  const mailto = shareEmailTemplate({ title: normalized.title, shareUrl });
+  return { ...row, shareUrl, mailto };
+}
+
 async function requireUser(req, res, next) {
   try {
     const auth = req.headers.authorization || "";
@@ -68,7 +77,8 @@ router.get("/", requireUser, async (req, res) => {
       .order("created_at", { ascending: false });
 
     if (error) throw error;
-    return res.json({ ok: true, decks: data || [] });
+    const decks = (data || []).map(decorateShareMeta);
+    return res.json({ ok: true, decks });
   } catch (e) {
     console.error("list decks error:", e);
     return res.status(500).json({ error: e?.message || "Couldn't load decks" });
@@ -89,7 +99,7 @@ router.get("/:id", requireUser, async (req, res) => {
       .single();
 
     if (error) throw error;
-    return res.json({ ok: true, deck: data });
+    return res.json({ ok: true, deck: decorateShareMeta(data) });
   } catch (e) {
     console.error("get deck error:", e);
     return res.status(404).json({ error: e?.message || "Deck not found" });
@@ -125,7 +135,8 @@ router.post("/save", requireUser, async (req, res) => {
         .select("id,title,content,created_at,export_pdf_url,prompt")
         .single();
 
-      if (!updateError && updated) return res.json({ ok: true, deck: updated });
+      if (!updateError && updated)
+        return res.json({ ok: true, deck: decorateShareMeta(updated) });
     }
 
     const { data, error } = await db
@@ -135,7 +146,7 @@ router.post("/save", requireUser, async (req, res) => {
       .single();
 
     if (error) throw error;
-    return res.json({ ok: true, deck: data });
+    return res.json({ ok: true, deck: decorateShareMeta(data) });
   } catch (e) {
     console.error("save deck error:", e);
     return res.status(500).json({ error: e?.message || "Save failed" });
@@ -160,6 +171,8 @@ router.post("/:id/share", requireUser, async (req, res) => {
 
     const normalized = normalizeDeckPayload(existing?.content || { id: deckId });
     const updatedContent = { ...normalized, shared: Boolean(shared) };
+    const shareUrl = buildShareUrl(updatedContent.shareCode);
+    const mailto = shareEmailTemplate({ title: updatedContent.title, shareUrl });
 
     const { data, error } = await db
       .from("decks")
@@ -170,7 +183,8 @@ router.post("/:id/share", requireUser, async (req, res) => {
       .single();
 
     if (error) throw error;
-    return res.json({ ok: true, deck: data });
+    if (shareUrl) res.setHeader("X-Aran-Share-Url", shareUrl);
+    return res.json({ ok: true, deck: decorateShareMeta(data), shareUrl, mailto });
   } catch (e) {
     console.error("share deck error:", e);
     return res.status(500).json({ error: e?.message || "Share failed" });
