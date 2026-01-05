@@ -8,7 +8,10 @@
 export default async function exportProject(req, res) {
   try {
     const now = new Date().toISOString();
-    const { title, prompt, contentType, beats, visuals, toneImage, ...rest } = req.body || {};
+    const body = req.body || {};
+    const deck = body.deck && typeof body.deck === "object" ? body.deck : null;
+    const src = deck || body;
+    const { title, prompt, contentType, beats, visuals, toneImage, ...rest } = src;
 
     const payload = {
       exportedAt: now,
