@@ -11,6 +11,8 @@ import generateToneImage from "./generateToneImage.js";
 
 import exportProject from "./export.js";
 import exportPdf from "./exportPdf.js";
+import exportImage from "./exportImage.js";
+import exportOptions from "./exportOptions.js";
 
 import decksRouter from "./decks.js";
 
@@ -36,8 +38,10 @@ router.post("/generate-storyboards", generateStoryboards);
 router.post("/generate-tone-image", generateToneImage);
 
 // Export
+router.get("/export/options", exportOptions);
 router.post("/export", exportProject);
 router.post("/export/pdf", exportPdf);
+router.post("/export/image", exportImage);
 
 // Beat evaluation (node tree)
 router.post("/evaluate-beats", evaluateBeats);

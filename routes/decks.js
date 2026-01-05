@@ -2,6 +2,8 @@
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
 
+import { normalizeDeckPayload } from "../utils/deckFormatter.js";
+
 const router = express.Router();
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -75,18 +77,17 @@ router.post("/save", requireUser, async (req, res) => {
   try {
     const userId = req.user.id;
     const body = req.body || {};
-    const deck = body.deck && typeof body.deck === "object" ? body.deck : null;
-
-    const src = deck || body;
-    const { id, title, prompt, export_pdf_url, content } = src;
+    const src = body.deck && typeof body.deck === "object" ? body.deck : body;
+    const normalized = normalizeDeckPayload(src);
+    const { id } = normalized;
 
     const row = {
       ...(id ? { id } : {}),
       user_id: userId,
-      title: title || content?.title || src?.title || "Untitled",
-      prompt: prompt || content?.prompt || src?.prompt || "",
-      export_pdf_url: export_pdf_url || null,
-      content: content || src?.content || src || {},
+      title: normalized.title || "Untitled",
+      prompt: normalized.prompt || "",
+      export_pdf_url: src.export_pdf_url || null,
+      content: { ...normalized },
     };
 
     if (id) {
@@ -109,6 +110,41 @@ router.post("/save", requireUser, async (req, res) => {
   } catch (e) {
     console.error("save deck error:", e);
     return res.status(500).json({ error: e?.message || "Save failed" });
+  }
+});
+
+router.post("/:id/share", requireUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const deckId = req.params.id;
+    const { shared = true } = req.body || {};
+
+    const { data: existing, error: fetchError } = await supabaseDb
+      .from("decks")
+      .select("content")
+      .eq("user_id", userId)
+      .eq("id", deckId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    const normalized = normalizeDeckPayload(existing?.content || { id: deckId });
+    const updatedContent = { ...normalized, shared: Boolean(shared) };
+
+    const { data, error } = await supabaseDb
+      .from("decks")
+      .update({ content: updatedContent })
+      .eq("user_id", userId)
+      .eq("id", deckId)
+      .select("id,title,content,created_at,export_pdf_url,prompt")
+      .single();
+
+    if (error) throw error;
+
+    return res.json({ ok: true, deck: data });
+  } catch (e) {
+    console.error("share deck error:", e);
+    return res.status(500).json({ error: e?.message || "Share failed" });
   }
 });
 
