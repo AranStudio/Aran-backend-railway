@@ -15,9 +15,30 @@ const supabaseAuth = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
 });
 
-const supabaseDb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-});
+const supabaseService = SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    })
+  : null;
+
+function supabaseUserDb(accessToken) {
+  // Use the user's JWT when a service role key isn't configured.
+  // This keeps deck saving working even if Railway/Vercel env vars are missing,
+  // as long as your Supabase RLS policies permit user_id = auth.uid().
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  });
+}
+
+function dbForReq(req) {
+  if (supabaseService) return supabaseService;
+  return supabaseUserDb(req.accessToken);
+}
 
 async function requireUser(req, res, next) {
   try {
@@ -29,6 +50,7 @@ async function requireUser(req, res, next) {
     if (error || !data?.user) return res.status(401).json({ error: "Invalid session" });
 
     req.user = data.user;
+    req.accessToken = token;
     return next();
   } catch (e) {
     console.error("requireUser error:", e);
@@ -39,7 +61,8 @@ async function requireUser(req, res, next) {
 router.get("/", requireUser, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { data, error } = await supabaseDb
+    const db = dbForReq(req);
+    const { data, error } = await db
       .from("decks")
       .select("id,title,content,created_at,export_pdf_url,prompt")
       .eq("user_id", userId)
@@ -58,7 +81,8 @@ router.get("/:id", requireUser, async (req, res) => {
     const userId = req.user.id;
     const deckId = req.params.id;
 
-    const { data, error } = await supabaseDb
+    const db = dbForReq(req);
+    const { data, error } = await db
       .from("decks")
       .select("id,title,content,created_at,export_pdf_url,prompt")
       .eq("user_id", userId)
@@ -76,6 +100,7 @@ router.get("/:id", requireUser, async (req, res) => {
 router.post("/save", requireUser, async (req, res) => {
   try {
     const userId = req.user.id;
+    const db = dbForReq(req);
     const body = req.body || {};
     const src = body.deck && typeof body.deck === "object" ? body.deck : body;
     const normalized = normalizeDeckPayload(src);
@@ -90,17 +115,23 @@ router.post("/save", requireUser, async (req, res) => {
       content: { ...normalized },
     };
 
+    // If an id is provided, update the existing row *for this user only*.
+    // Avoid a raw upsert on primary key which could overwrite other users' rows
+    // when using a service role key.
     if (id) {
-      const { data, error } = await supabaseDb
+      const { data: updated, error: updateError } = await db
         .from("decks")
-        .upsert(row, { onConflict: "id" })
+        .update(row)
+        .eq("user_id", userId)
+        .eq("id", id)
         .select("id,title,content,created_at,export_pdf_url,prompt")
         .single();
-      if (error) throw error;
-      return res.json({ ok: true, deck: data });
+
+      // If update didn't find a row, fall back to insert.
+      if (!updateError && updated) return res.json({ ok: true, deck: updated });
     }
 
-    const { data, error } = await supabaseDb
+    const { data, error } = await db
       .from("decks")
       .insert(row)
       .select("id,title,content,created_at,export_pdf_url,prompt")
@@ -119,7 +150,9 @@ router.post("/:id/share", requireUser, async (req, res) => {
     const deckId = req.params.id;
     const { shared = true } = req.body || {};
 
-    const { data: existing, error: fetchError } = await supabaseDb
+    const db = dbForReq(req);
+
+    const { data: existing, error: fetchError } = await db
       .from("decks")
       .select("content")
       .eq("user_id", userId)
@@ -131,7 +164,7 @@ router.post("/:id/share", requireUser, async (req, res) => {
     const normalized = normalizeDeckPayload(existing?.content || { id: deckId });
     const updatedContent = { ...normalized, shared: Boolean(shared) };
 
-    const { data, error } = await supabaseDb
+    const { data, error } = await db
       .from("decks")
       .update({ content: updatedContent })
       .eq("user_id", userId)
@@ -153,7 +186,8 @@ router.delete("/:id", requireUser, async (req, res) => {
     const userId = req.user.id;
     const deckId = req.params.id;
 
-    const { error } = await supabaseDb.from("decks").delete().eq("user_id", userId).eq("id", deckId);
+    const db = dbForReq(req);
+    const { error } = await db.from("decks").delete().eq("user_id", userId).eq("id", deckId);
     if (error) throw error;
     return res.json({ ok: true });
   } catch (e) {
