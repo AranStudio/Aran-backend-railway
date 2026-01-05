@@ -1,39 +1,24 @@
 // routes/export.js
 
+import { buildExportPayload, normalizeDeckPayload, safeFilename } from "../utils/deckFormatter.js";
+
 /**
- * Provides a simple JSON export of the current project payload.
+ * Provides a structured JSON export of the current project payload.
  * The client posts whatever data it wants to persist and receives
  * a downloadable JSON file in response.
  */
 export default async function exportProject(req, res) {
   try {
-    const now = new Date().toISOString();
     const body = req.body || {};
-    const deck = body.deck && typeof body.deck === "object" ? body.deck : null;
-    const src = deck || body;
-    const { title, prompt, contentType, beats, visuals, toneImage, ...rest } = src;
+    const deck = normalizeDeckPayload(body);
+    const includeSections = Array.isArray(body.include) ? body.include : body.sections;
 
-    const payload = {
-      exportedAt: now,
-      title: title || "Untitled",
-      prompt: prompt || "",
-      contentType: contentType || "",
-      beats: Array.isArray(beats) ? beats : [],
-      visuals: Array.isArray(visuals) ? visuals : [],
-      toneImage: toneImage || null,
-      extra: rest,
-    };
-
-    const safeTitle = String(payload.title || "aran-export")
-      .toLowerCase()
-      .replace(/[^a-z0-9-_\.]+/gi, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "");
-
-    const filename = `${safeTitle || "aran-export"}.json`;
+    const payload = buildExportPayload(deck, includeSections);
+    const filename = `${safeFilename(deck.title || "aran-export", "aran-export")}.json`;
 
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("X-Export-Include", JSON.stringify(includeSections || []));
 
     return res.status(200).send(JSON.stringify(payload, null, 2));
   } catch (err) {

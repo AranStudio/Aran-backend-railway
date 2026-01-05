@@ -1,44 +1,34 @@
 // routes/exportPdf.js
 import PDFDocument from "pdfkit";
 
-function safeFilename(name) {
-  return String(name || "aran-deck")
-    .toLowerCase()
-    .replace(/[^a-z0-9-_]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 60) || "aran-deck";
-}
+import { decodeDataUrlImage, normalizeDeckPayload, safeFilename } from "../utils/deckFormatter.js";
 
-function decodeDataUrlImage(dataUrl) {
-  if (!dataUrl || typeof dataUrl !== "string") return null;
-  const m = dataUrl.match(/^data:image\/(png|jpeg|jpg);base64,(.+)$/i);
-  if (!m) return null;
-  try {
-    return Buffer.from(m[2], "base64");
-  } catch {
-    return null;
-  }
+function isIncluded(includeSet, key) {
+  if (!includeSet) return true;
+  return includeSet.has(key);
 }
 
 export default async function exportPdf(req, res) {
   try {
     const body = req.body || {};
+    const deck = normalizeDeckPayload(body);
+    const includeRaw = Array.isArray(body.include) ? body.include : body.sections;
+    const includeSet = Array.isArray(includeRaw)
+      ? new Set(includeRaw.map((s) => String(s).toLowerCase()))
+      : null;
 
-    // ✅ Support frontend shape: { deck: payload, saveToAccount: true/false }
-    const deck = body.deck && typeof body.deck === "object" ? body.deck : null;
-    const src = deck || body;
+    const title = deck.title || "Aran Deck";
+    const contentType = deck.contentType || "";
+    const prompt = deck.prompt || "";
+    const brief = deck.brief || "";
 
-    const title = src.title || "Aran Deck";
-    const contentType = src.contentType || src.type || "";
-    const prompt = src.prompt || "";
-
-    const beats = Array.isArray(src.beats) ? src.beats : [];
-    const beatTitles = Array.isArray(src.beatTitles) ? src.beatTitles : [];
-
-    const toneImage = src.toneImage || src.tone_image || null;
-    const visuals = Array.isArray(src.visuals) ? src.visuals : [];
-    const storyboards = Array.isArray(src.storyboards) ? src.storyboards : [];
+    const beats = Array.isArray(deck.beats) ? deck.beats : [];
+    const toneImage = deck.toneImage || null;
+    const visuals = Array.isArray(deck.visuals) ? deck.visuals : [];
+    const storyboards = Array.isArray(deck.storyboards) ? deck.storyboards : [];
+    const scenes = Array.isArray(deck.scenes) ? deck.scenes : [];
+    const shots = Array.isArray(deck.shots) ? deck.shots : [];
+    const suggestions = Array.isArray(deck.suggestions) ? deck.suggestions : [];
 
     const filename = `${safeFilename(title)}.pdf`;
 
@@ -54,15 +44,22 @@ export default async function exportPdf(req, res) {
     if (contentType) {
       doc.fontSize(12).text(String(contentType), { align: "left" });
     }
-    if (prompt) {
+    if (prompt && isIncluded(includeSet, "prompt")) {
       doc.moveDown();
       doc.fontSize(12).text("Prompt", { underline: true });
       doc.moveDown(0.35);
       doc.fontSize(10).text(String(prompt), { lineGap: 3 });
     }
 
-    const toneBuf = decodeDataUrlImage(toneImage);
-    if (toneBuf) {
+    if (brief && isIncluded(includeSet, "brief")) {
+      doc.moveDown();
+      doc.fontSize(12).text("Brief", { underline: true });
+      doc.moveDown(0.35);
+      doc.fontSize(10).text(String(brief), { lineGap: 3 });
+    }
+
+    const toneBuf = decodeDataUrlImage(toneImage)?.buffer;
+    if (toneBuf && isIncluded(includeSet, "toneImage")) {
       doc.addPage();
       doc.fontSize(14).text("Tone Image", { underline: true });
       doc.moveDown();
@@ -73,15 +70,15 @@ export default async function exportPdf(req, res) {
       }
     }
 
-    if (beats.length) {
+    if (beats.length && isIncluded(includeSet, "beats")) {
       doc.addPage();
       doc.fontSize(14).text("Beats", { underline: true });
       doc.moveDown();
 
       for (let i = 0; i < beats.length; i++) {
         const b = beats[i] || {};
-        const beatTitle = beatTitles[i] || b.title || `Beat ${i + 1}`;
-        const beatText = b.text || b.body || b.description || "";
+        const beatTitle = b.title || `Beat ${i + 1}`;
+        const beatText = b.text || "";
 
         doc.fontSize(12).text(String(beatTitle), { continued: false });
         doc.moveDown(0.25);
@@ -92,7 +89,37 @@ export default async function exportPdf(req, res) {
       }
     }
 
-    if (visuals.length) {
+    if (scenes.length && isIncluded(includeSet, "scenes")) {
+      doc.addPage();
+      doc.fontSize(14).text("Scenes", { underline: true });
+      doc.moveDown();
+
+      scenes.forEach((scene, i) => {
+        doc.fontSize(12).text(scene.title || `Scene ${i + 1}`);
+        if (scene.text) {
+          doc.moveDown(0.25);
+          doc.fontSize(10).text(scene.text, { lineGap: 3 });
+        }
+        if (i !== scenes.length - 1) doc.moveDown();
+      });
+    }
+
+    if (shots.length && isIncluded(includeSet, "shots")) {
+      doc.addPage();
+      doc.fontSize(14).text("Shots", { underline: true });
+      doc.moveDown();
+
+      shots.forEach((shot, i) => {
+        doc.fontSize(12).text(shot.title || `Shot ${i + 1}`);
+        if (shot.text) {
+          doc.moveDown(0.25);
+          doc.fontSize(10).text(shot.text, { lineGap: 3 });
+        }
+        if (i !== shots.length - 1) doc.moveDown();
+      });
+    }
+
+    if (visuals.length && isIncluded(includeSet, "visuals")) {
       doc.addPage();
       doc.fontSize(14).text("Visuals", { underline: true });
       doc.moveDown();
@@ -105,7 +132,7 @@ export default async function exportPdf(req, res) {
         doc.fontSize(12).text(String(caption));
         doc.moveDown(0.25);
 
-        const buf = decodeDataUrlImage(img);
+        const buf = decodeDataUrlImage(img)?.buffer;
         if (buf) {
           try {
             doc.image(buf, { fit: [520, 520], align: "center" });
@@ -120,7 +147,7 @@ export default async function exportPdf(req, res) {
       }
     }
 
-    if (storyboards.length) {
+    if (storyboards.length && isIncluded(includeSet, "storyboards")) {
       doc.addPage();
       doc.fontSize(14).text("Storyboards", { underline: true });
       doc.moveDown();
@@ -133,7 +160,7 @@ export default async function exportPdf(req, res) {
         doc.fontSize(12).text(String(caption));
         doc.moveDown(0.25);
 
-        const buf = decodeDataUrlImage(img);
+        const buf = decodeDataUrlImage(img)?.buffer;
         if (buf) {
           try {
             doc.image(buf, { fit: [520, 520], align: "center" });
@@ -146,6 +173,19 @@ export default async function exportPdf(req, res) {
 
         if (i !== storyboards.length - 1) doc.addPage();
       }
+    }
+
+    if (suggestions.length && isIncluded(includeSet, "suggestions")) {
+      doc.addPage();
+      doc.fontSize(14).text("Suggestions", { underline: true });
+      doc.moveDown();
+
+      suggestions.forEach((s, i) => {
+        const text = s?.text || "";
+        if (!text) return;
+        doc.fontSize(10).text(`• ${text}`, { lineGap: 3 });
+        if (i !== suggestions.length - 1) doc.moveDown(0.25);
+      });
     }
 
     doc.end();
