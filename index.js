@@ -16,6 +16,8 @@ const staticAllowedOrigins = [
   "http://localhost:8080",
 ];
 
+const allowAllOrigins = process.env.CORS_ALLOW_ALL !== "false";
+
 const allowedOrigins = new Set([
   ...staticAllowedOrigins,
   ...(process.env.WEB_ORIGINS
@@ -38,6 +40,7 @@ const normalizeOrigin = (origin) => {
 };
 
 const isAllowedOrigin = (origin) => {
+  if (allowAllOrigins) return true;
   if (!origin) return true; // allow curl / server-to-server
   const norm = normalizeOrigin(origin);
   if (!norm) return false;
