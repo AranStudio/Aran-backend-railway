@@ -3,40 +3,53 @@ import { openai, asDataUrlFromB64 } from "../utils/openaiClient.js";
 
 export default async function generateToneImage(req, res) {
   try {
-    const { prompt, beats = [], title = "" } = req.body || {};
+    const { prompt, beats = [], title = "", contentType = "" } = req.body || {};
     if (!prompt || !String(prompt).trim()) {
       return res.status(400).json({ error: "Missing prompt" });
     }
 
     const beatSnippet = Array.isArray(beats)
       ? beats
-          .slice(0, 3)
+          .slice(0, 4)
           .map((b) => String(b).trim())
           .filter(Boolean)
           .join(" / ")
       : "";
 
+    // Lock the aspect ratio to 3:2 so the UI tone frame never crops awkwardly.
+    // We also instruct "safe framing" so important elements are centered.
     const imgPrompt = `
-Create ONE cinematic tone image.
-No text in the image.
-Visually beautiful, professional, film still quality.
+Create ONE Aran "tone frame" image for this story.
+
+RULES:
+- No text, no titles, no logos, no watermarks.
+- Keep the subject fully inside frame (safe margins). Avoid edge-cutoff.
+- Cinematic, high-end still image. Beautiful lighting and composition.
+- Match the story's genre and mood (content type: ${contentType || "any"}).
+- Use a clean, modern, slightly futuristic feel that matches Aran's neon glass aesthetic.
+- 3:2 landscape composition.
 
 Story title: ${title}
 Prompt: ${prompt}
 Beats: ${beatSnippet}
+`.trim();
 
-Style: cinematic lighting, high-end commercial still, tasteful composition.
-`;
+    async function tryGenerate(size) {
+      return await openai.images.generate({
+        model: "gpt-image-1",
+        prompt: imgPrompt,
+        size,
+      });
+    }
 
-    // ✅ IMPORTANT: Do NOT pass response_format here.
-    // The current OpenAI SDK images API typically returns a hosted URL.
-    const response = await openai.images.generate({
-      model: "gpt-image-1",
-      prompt: imgPrompt,
-      size: "1024x1024",
-    });
+    // Prefer landscape 3:2; fallback to square if the API ever rejects the size.
+    let response;
+    try {
+      response = await tryGenerate("1536x1024");
+    } catch (e) {
+      response = await tryGenerate("1024x1024");
+    }
 
-    // Prefer base64 if present, else use url
     const url = response?.data?.[0]?.url || null;
     const b64 = response?.data?.[0]?.b64_json || null;
     const dataUrl = asDataUrlFromB64(b64);
