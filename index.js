@@ -1,13 +1,15 @@
 import "dotenv/config";
 import express from "express";
-import cors from "cors";
 import router from "./routes/router.js";
+
+/**
+ * Aran API — hardened CORS + preflight
+ * Fixes: browser preflight failing with missing Access-Control-Allow-Origin
+ */
 
 const app = express();
 
-/**
- * ✅ CORS — must be FIRST, before json parsing + routes.
- */
+/* -------------------- CORS -------------------- */
 const staticAllowedOrigins = [
   "https://www.aran.studio",
   "https://aran.studio",
@@ -16,84 +18,111 @@ const staticAllowedOrigins = [
   "http://localhost:8080",
 ];
 
-const allowAllOrigins = process.env.CORS_ALLOW_ALL !== "false";
+const extraOrigins = (process.env.WEB_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
-const allowedOrigins = new Set([
-  ...staticAllowedOrigins,
-  ...(process.env.WEB_ORIGINS
-    ? process.env.WEB_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
-    : []),
-]);
+const allowedOrigins = new Set([...staticAllowedOrigins, ...extraOrigins]);
 
-const parseOrigin = (origin) => {
+const allowAllOrigins =
+  String(process.env.CORS_ALLOW_ALL || "").toLowerCase() === "true";
+
+function normalizeOrigin(origin) {
   try {
-    return new URL(origin);
+    const u = new URL(origin);
+    return `${u.protocol}//${u.host}`;
   } catch {
     return null;
   }
-};
+}
 
-const normalizeOrigin = (origin) => {
-  const u = parseOrigin(origin);
-  if (!u) return null;
-  return `${u.protocol}//${u.host}`;
-};
+/**
+ * Allow Vercel preview deploys if needed (optional):
+ * Set CORS_ALLOW_VERCEL_PREVIEWS=true
+ */
+const allowVercelPreviews =
+  String(process.env.CORS_ALLOW_VERCEL_PREVIEWS || "").toLowerCase() === "true";
 
-const isAllowedOrigin = (origin) => {
+function isVercelPreview(normOrigin) {
+  // e.g. https://aran-frontend-git-branch-username.vercel.app
+  return allowVercelPreviews && /\.vercel\.app$/i.test(normOrigin);
+}
+
+function isAllowedOrigin(origin) {
   if (allowAllOrigins) return true;
-  if (!origin) return true; // allow curl / server-to-server
+  if (!origin) return true; // curl/server-to-server
   const norm = normalizeOrigin(origin);
   if (!norm) return false;
-  return allowedOrigins.has(norm);
-};
+  if (allowedOrigins.has(norm)) return true;
+  if (isVercelPreview(norm)) return true;
+  return false;
+}
 
-const corsOptions = {
-  origin: (origin, cb) => {
-    if (isAllowedOrigin(origin)) return cb(null, true);
-    return cb(new Error(`CORS blocked origin: ${origin}`));
-  },
-  // IMPORTANT: If you are NOT using cookies/sessions, set this to false.
-  // Keeping true can cause stricter browser behavior.
-  credentials: false,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  optionsSuccessStatus: 204,
-  maxAge: 86400,
-};
+function applyCors(req, res) {
+  const origin = req.headers.origin;
+  if (!origin) return;
 
-// Apply CORS to ALL requests
-app.use(cors(corsOptions));
+  const norm = normalizeOrigin(origin) || origin;
 
-// Guarantee preflight always works for ALL paths
-app.options("*", cors(corsOptions));
+  if (isAllowedOrigin(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", norm);
+    res.setHeader("Vary", "Origin");
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+    );
 
+    // Echo requested headers if present (covers Authorization + any custom headers)
+    const reqHeaders = req.headers["access-control-request-headers"];
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      reqHeaders || "Content-Type, Authorization"
+    );
+
+    // Cache preflight for a day
+    res.setHeader("Access-Control-Max-Age", "86400");
+  }
+}
+
+// CORS + preflight must be first (before body parsing + routes)
+app.use((req, res, next) => {
+  applyCors(req, res);
+
+  // Always answer preflight quickly.
+  if (req.method === "OPTIONS") {
+    // If origin is not allowed, still respond 204 without CORS headers.
+    // Browser will block it, but this avoids noisy 404/500s.
+    return res.status(204).send("");
+  }
+  return next();
+});
+
+/* -------------------- Body parsing -------------------- */
 // Large payload support (base64 images can be big)
 app.use(express.json({ limit: process.env.JSON_LIMIT || "80mb" }));
 
+/* -------------------- Routes -------------------- */
 app.use("/api", router);
 
 // Health check (nice for Railway)
 app.get("/", (_req, res) => res.status(200).send("OK"));
 
-// Error handler — also ensure allowed origins still get CORS headers even on errors
+/* -------------------- Error handler -------------------- */
 app.use((err, req, res, _next) => {
   console.error("Unhandled error:", err);
 
-  const origin = req.headers.origin;
-  if (isAllowedOrigin(origin)) {
-    // Ensure CORS headers exist on error responses too
-    res.setHeader("Access-Control-Allow-Origin", normalizeOrigin(origin) || origin);
-    res.setHeader("Vary", "Origin");
-    res.setHeader("Access-Control-Allow-Methods", corsOptions.methods.join(","));
-    res.setHeader("Access-Control-Allow-Headers", corsOptions.allowedHeaders.join(","));
+  // Ensure CORS headers exist on error responses too
+  applyCors(req, res);
+
+  const msg = err?.message || "Server error";
+  const lower = String(msg).toLowerCase();
+
+  if (lower.includes("cors") && lower.includes("origin")) {
+    return res.status(403).json({ error: msg });
   }
 
-  // If it's a CORS block, respond 403 (clearer than 500)
-  if (String(err?.message || "").toLowerCase().includes("cors blocked")) {
-    return res.status(403).json({ error: err.message });
-  }
-
-  return res.status(500).json({ error: "Server error" });
+  return res.status(err?.status || 500).json({ error: msg });
 });
 
 const PORT = process.env.PORT || 8080;
