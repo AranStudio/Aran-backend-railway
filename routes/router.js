@@ -14,6 +14,9 @@ import exportPdf from "./exportPdf.js";
 import exportImage from "./exportImage.js";
 import exportOptions from "./exportOptions.js";
 import sharedDeck from "./sharedDeck.js";
+import dailySpark from "./dailySpark.js";
+import analyzeDna from "./analyzeDna.js";
+import analyzeEmotions from "./analyzeEmotions.js";
 
 import decksRouter from "./decks.js";
 
@@ -47,5 +50,10 @@ router.get("/share/:code", sharedDeck);
 
 // Beat evaluation (node tree)
 router.post("/evaluate-beats", evaluateBeats);
+
+// Studio / "Aran OS" utilities
+router.post("/daily-spark", dailySpark);
+router.post("/analyze/dna", analyzeDna);
+router.post("/analyze/emotions", analyzeEmotions);
 
 export default router;
