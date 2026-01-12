@@ -21,17 +21,18 @@ export default async function generateToneImage(req, res) {
     const imgPrompt = `
 Create ONE Aran "tone frame" image for this story.
 
-RULES:
+DESIGN:
+- Single 3:2 landscape image that contains a clean 3-panel filmstrip (triptych) layout INSIDE the frame.
+- Panels should be evenly sized, left-to-right story progression.
+- Use thin, tasteful gutters between panels (subtle neon-glass border, Aran aesthetic).
+- Keep all key subjects safely inside each panel (safe margins). Nothing cropped at edges.
 - No text, no titles, no logos, no watermarks.
-- Keep the subject fully inside frame (safe margins). Avoid edge-cutoff.
-- Cinematic, high-end still image. Beautiful lighting and composition.
+- Cinematic, high-end stills. Beautiful lighting and composition.
 - Match the story's genre and mood (content type: ${contentType || "any"}).
-- Use a clean, modern, slightly futuristic feel that matches Aran's neon glass aesthetic.
-- 3:2 landscape composition.
 
 Story title: ${title}
 Prompt: ${prompt}
-Beats: ${beatSnippet}
+Beats (use these as panel cues): ${beatSnippet}
 `.trim();
 
     async function tryGenerate(size) {
