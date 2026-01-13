@@ -4,7 +4,7 @@
  * - If OPENAI_API_KEY is present, we generate a tailored spark with JSON.
  * - Otherwise we fall back to a deterministic "good enough" spark.
  */
-import { chat } from "../utils/openaiClient.js";
+import { chatCompletion } from "../utils/openaiClient.js";
 
 const FALLBACK_SPARKS = [
   "Write a scene where two people lie about the same thing for opposite reasons.",
@@ -41,14 +41,15 @@ export default async function dailySpark(req, res) {
       },
     ];
 
-    const out = await chat({
+    const out = await chatCompletion({
       messages,
+      model: "gpt-4o-mini",
       temperature: 0.9,
       maxTokens: 140,
       responseFormat: { type: "json_object" },
     });
 
-    const parsed = JSON.parse(out || "{}");
+    const parsed = JSON.parse(out?.text || "{}");
     const prompt = String(parsed.prompt || parsed.spark || "").trim();
     if (prompt) {
       return res.json({
