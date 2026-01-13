@@ -55,6 +55,7 @@ function isAllowedOrigin(origin) {
   const norm = normalizeOrigin(origin);
   if (!norm) return false;
   if (allowedOrigins.has(norm)) return true;
+  if (/\.aran\.studio$/i.test(new URL(norm).hostname)) return true;
   if (isVercelPreview(norm)) return true;
   return false;
 }
