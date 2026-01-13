@@ -3,7 +3,7 @@
  * Emotional Arc — returns per-beat scores for: tension, hope, intimacy, chaos, stakes.
  * Heuristic baseline; optionally OpenAI to refine.
  */
-import { chat } from "../utils/openaiClient.js";
+import { chatCompletion } from "../utils/openaiClient.js";
 
 const LEX = {
   tension: /\b(threat|danger|fear|risk|deadline|chase|escape|hunt|weapon|mystery|suspense|pressure)\b/g,
@@ -62,13 +62,14 @@ export default async function analyzeEmotions(req, res) {
           "Heuristic baseline: " + JSON.stringify(baseSeries),
       },
     ];
-    const out = await chat({
+    const out = await chatCompletion({
       messages,
+      model: "gpt-4o-mini",
       temperature: 0.2,
       maxTokens: 320,
       responseFormat: { type: "json_object" },
     });
-    const parsed = JSON.parse(out || "{}");
+    const parsed = JSON.parse(out?.text || "{}");
     if (Array.isArray(parsed.series)) {
       return res.json({ series: parsed.series.slice(0, beats.length), notes: parsed.notes || "", source: "openai" });
     }
