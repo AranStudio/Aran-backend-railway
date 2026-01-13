@@ -3,7 +3,7 @@
  * Story DNA — returns a simple "mixture" + a short textual read.
  * Uses heuristics by default, optionally OpenAI if available.
  */
-import { chat } from "../utils/openaiClient.js";
+import { chatCompletion } from "../utils/openaiClient.js";
 
 function heuristicDNA({ storyType = "Any format", brief = "", beats = [] }) {
   const text = (storyType + "\n" + brief + "\n" + (beats || []).join("\n")).toLowerCase();
@@ -73,13 +73,14 @@ export default async function analyzeDna(req, res) {
       },
       { role: "user", content: "Analyze Story DNA for this project:\n" + JSON.stringify(payload).slice(0, 8000) },
     ];
-    const out = await chat({
+    const out = await chatCompletion({
       messages,
+      model: "gpt-4o-mini",
       temperature: 0.3,
       maxTokens: 260,
       responseFormat: { type: "json_object" },
     });
-    const parsed = JSON.parse(out || "{}");
+    const parsed = JSON.parse(out?.text || "{}");
     if (parsed && parsed.mixture) return res.json({ ...parsed, source: "openai" });
   } catch (e) {
     // fall back
