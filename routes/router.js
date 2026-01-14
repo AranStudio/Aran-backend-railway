@@ -21,6 +21,8 @@ import analyzeEmotions from "./analyzeEmotions.js";
 import decksRouter from "./decks.js";
 
 import createCheckoutSession from "./createCheckoutSession.js";
+import billingPortal from "./billingPortal.js";
+import billingHistory from "./billingHistory.js";
 import evaluateBeats from "./evaluateBeats.js";
 
 const router = express.Router();
@@ -34,6 +36,8 @@ router.use("/decks", decksRouter);
 
 // Billing
 router.post("/create-checkout-session", createCheckoutSession);
+router.post("/billing/portal", billingPortal);
+router.post("/billing/history", billingHistory);
 
 // Generation
 router.post("/generate", generate);
