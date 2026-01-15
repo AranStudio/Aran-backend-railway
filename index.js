@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import router from "./routes/router.js";
+import stripeWebhook from "./routes/stripeWebhook.js";
 
 /**
  * Aran API — hardened CORS + preflight
@@ -98,6 +99,9 @@ app.use((req, res, next) => {
   }
   return next();
 });
+
+/* -------------------- Stripe webhook (RAW body) -------------------- */
+app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), stripeWebhook);
 
 /* -------------------- Body parsing -------------------- */
 // Large payload support (base64 images can be big)
