@@ -17,12 +17,8 @@
     "express": "^4.19.2",
     "node-fetch": "^3.3.2",
     "openai": "^4.57.0",
-    "ffmpeg-static": "^5.2.0",
-    "ffprobe-static": "^3.1.0",
-    "multer": "^1.4.5-lts.1",
     "pdfkit": "^0.15.0",
-    "stripe": "^16.0.0",
-    "tesseract.js": "^5.1.0"
+    "stripe": "^16.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
