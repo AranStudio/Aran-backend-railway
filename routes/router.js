@@ -25,7 +25,19 @@ import billingPortal from "./billingPortal.js";
 import billingHistory from "./billingHistory.js";
 import evaluateBeats from "./evaluateBeats.js";
 
+import multer from "multer";
+import whiteboardInterpret from "./whiteboardInterpret.js";
+import videoShotlist from "./videoShotlist.js";
+
 const router = express.Router();
+
+// Multipart upload (video) stored to /tmp
+const upload = multer({
+  dest: "/tmp",
+  limits: {
+    fileSize: 1024 * 1024 * 500, // 500MB
+  },
+});
 
 // Auth
 router.post("/auth/login", authLogin);
@@ -44,6 +56,10 @@ router.post("/generate", generate);
 router.post("/generate-visuals", generateVisuals);
 router.post("/generate-storyboards", generateStoryboards);
 router.post("/generate-tone-image", generateToneImage);
+
+// New inputs
+router.post("/whiteboard/interpret", whiteboardInterpret);
+router.post("/video/shotlist", upload.single("video"), videoShotlist);
 
 // Export
 router.get("/export/options", exportOptions);
