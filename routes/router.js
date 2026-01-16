@@ -26,8 +26,8 @@ import billingHistory from "./billingHistory.js";
 import evaluateBeats from "./evaluateBeats.js";
 
 // New inputs
-import whiteboardRouter from "./whiteboard.js";
-import videoShotlistRouter from "./videoShotlist.js";
+import whiteboard from "./whiteboard.js";
+import videoShotlist from "./videoShotlist.js";
 
 const router = express.Router();
 
@@ -59,13 +59,13 @@ router.get("/share/:code", sharedDeck);
 // Beat evaluation (node tree)
 router.post("/evaluate-beats", evaluateBeats);
 
-// New inputs
-router.use("/whiteboard", whiteboardRouter);
-router.use("/video", videoShotlistRouter);
-
 // Studio / "Aran OS" utilities
 router.post("/daily-spark", dailySpark);
 router.post("/analyze/dna", analyzeDna);
 router.post("/analyze/emotions", analyzeEmotions);
+
+// New tools
+router.post("/whiteboard/interpret", whiteboard);
+router.post("/video/shotlist", videoShotlist);
 
 export default router;
