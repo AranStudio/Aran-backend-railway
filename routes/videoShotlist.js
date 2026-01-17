@@ -124,31 +124,79 @@ async function detectCutsAndFrames(videoPath, outDir, threshold) {
   return { cutTimes: Array.from(new Set(times)).sort((a, b) => a - b), framePaths };
 }
 
+async function detectCutsAdaptive(videoPath, outDir, threshold) {
+  // Scene detection can be finicky depending on codec, motion blur, dissolves, etc.
+  // If we detect too few cuts, progressively lower the threshold.
+  const tries = Array.from(
+    new Set([
+      threshold,
+      Math.max(0.05, threshold * 0.75),
+      0.2,
+      0.15,
+      0.12,
+      0.1,
+    ].map((t) => Math.min(0.95, Math.max(0.05, t))))
+  );
+
+  let best = { cutTimes: [], framePaths: [] };
+  for (const t of tries) {
+    // Clear any previously extracted frames for a fresh run.
+    for (const f of fs.readdirSync(outDir)) {
+      if (f.startsWith("frame_") && f.endsWith(".jpg")) {
+        try { fs.unlinkSync(path.join(outDir, f)); } catch {}
+      }
+    }
+    const r = await detectCutsAndFrames(videoPath, outDir, t);
+    if ((r.cutTimes?.length || 0) > (best.cutTimes?.length || 0)) best = r;
+    // Once we have a reasonable number of cuts, stop.
+    if ((r.cutTimes?.length || 0) >= 8) return { ...r, usedThreshold: t };
+  }
+  return { ...best, usedThreshold: tries[0] };
+}
+
+async function extractKeyframe(videoPath, outPath, atSeconds) {
+  const ss = String(Math.max(0, atSeconds));
+  await run(ffmpegPath, [
+    "-hide_banner",
+    "-ss", ss,
+    "-i", videoPath,
+    "-frames:v", "1",
+    "-q:v", "3",
+    outPath,
+  ]);
+  return outPath;
+}
+
+async function extractKeyframesForShots(videoPath, outDir, cuts, maxShots) {
+  const paths = [];
+  for (let i = 0; i < maxShots; i++) {
+    const start = cuts[i];
+    const end = cuts[i + 1];
+    const mid = start + Math.max(0.01, (end - start) * 0.5);
+    const outPath = path.join(outDir, `shot_${String(i + 1).padStart(4, "0")}.jpg`);
+    await extractKeyframe(videoPath, outPath, mid);
+    paths.push(outPath);
+  }
+  return paths;
+}
+
 async function buildShotlist(videoPath, threshold) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aran-shotlist-"));
   try {
     const meta = await probeMeta(videoPath);
     const duration = meta.duration || 0;
 
-    const { cutTimes, framePaths } = await detectCutsAndFrames(videoPath, tmpDir, threshold);
+    const { cutTimes, framePaths, usedThreshold } = await detectCutsAdaptive(videoPath, tmpDir, threshold);
 
     // Build shot intervals. Start at 0.
     const cuts = [0, ...cutTimes.filter((t) => t > 0.05 && t < duration - 0.05), duration];
     const fps = 30;
 
-    // Pick a representative image per shot: if we extracted frames, map them sequentially to cuts.
-    // If no frames extracted, create 1 frame at t=0.
-    let images = framePaths;
-    if (images.length === 0) {
-      const single = path.join(tmpDir, "frame_0001.jpg");
-      await run(ffmpegPath, ["-hide_banner", "-ss", "0", "-i", videoPath, "-frames:v", "1", "-q:v", "3", single]);
-      images = [single];
-    }
-
-    // OCR first N frames to keep response fast
-    const maxShots = Math.min(cuts.length - 1, 60);
-    const useImages = images.slice(0, maxShots);
-    const ocrLines = await ocrImages(useImages);
+    // OCR a representative keyframe for every shot (midpoint), so we don't miss interior shots
+    // even when scene detection extracted few frames.
+    const maxShots = Math.min(cuts.length - 1, 220);
+    const shotKeyframes = await extractKeyframesForShots(videoPath, tmpDir, cuts, maxShots);
+    const ocrLines = await ocrImages(shotKeyframes);
 
     const shots = [];
     const allText = [];
@@ -164,6 +212,7 @@ async function buildShotlist(videoPath, threshold) {
     return {
       title: "Shotlist",
       durationSeconds: duration,
+      usedThreshold,
       shots,
       textBuckets: bucketText(allText),
     };
@@ -184,7 +233,29 @@ export async function videoShotlistHandler(req, res) {
     const videoPath = path.join(tmpDir, `upload_${Date.now()}_${req.file.originalname || "video.mp4"}`);
     fs.writeFileSync(videoPath, req.file.buffer);
 
+    const onlyWithText = String(req.body?.onlyWithText || "").toLowerCase() === "true";
+    const includeBucketsRaw = req.body?.includeBuckets;
+    const includeBuckets = Array.isArray(includeBucketsRaw)
+      ? includeBucketsRaw
+      : typeof includeBucketsRaw === "string" && includeBucketsRaw.trim()
+        ? includeBucketsRaw.split(",").map((s) => s.trim()).filter(Boolean)
+        : null;
+
     const result = await buildShotlist(videoPath, threshold);
+
+    if (onlyWithText) {
+      const allowed = new Set((includeBuckets || ["titles", "lowerThirds", "locations", "other"]).map((s) => s.toLowerCase()));
+      result.shots = result.shots.filter((shot) => {
+        const buckets = bucketText(shot.text || []);
+        const has = (k) => (buckets[k] || []).length > 0;
+        return (
+          (allowed.has("titles") && has("titles")) ||
+          ((allowed.has("lowerthirds") || allowed.has("lowerthird") || allowed.has("lower_thirds") || allowed.has("lower-thirds")) && has("lowerThirds")) ||
+          (allowed.has("locations") && has("locations")) ||
+          (allowed.has("other") && has("other"))
+        );
+      });
+    }
 
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
 
