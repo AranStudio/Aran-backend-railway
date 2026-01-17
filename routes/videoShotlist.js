@@ -1,198 +1,196 @@
+import multer from "multer";
 import fs from "fs";
-import os from "os";
 import path from "path";
+import os from "os";
 import { execFile } from "child_process";
-import { openai } from "../utils/openaiClient.js";
+import ffmpegPath from "ffmpeg-static";
+import ffprobePath from "ffprobe-static";
+import { createWorker } from "tesseract.js";
 
-function stripDataUrl(dataUrl) {
-  if (!dataUrl) return null;
-  const m = String(dataUrl).match(/^data:(video\/\w+);base64,(.+)$/);
-  if (!m) return null;
-  return { mime: m[1], b64: m[2] };
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 1024 * 1024 * 500 } });
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+function secondsToTimecode(sec, fps = 30) {
+  const totalFrames = Math.max(0, Math.round(sec * fps));
+  const frames = totalFrames % fps;
+  const totalSeconds = Math.floor(totalFrames / fps);
+  const s = totalSeconds % 60;
+  const m = Math.floor(totalSeconds / 60) % 60;
+  const h = Math.floor(totalSeconds / 3600);
+  return `${pad2(h)}:${pad2(m)}:${pad2(s)}:${pad2(frames)}`;
 }
 
-function execFileAsync(cmd, args, opts = {}) {
+function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { ...opts }, (err, stdout, stderr) => {
+    execFile(cmd, args, { ...opts, maxBuffer: 1024 * 1024 * 20 }, (err, stdout, stderr) => {
       if (err) {
         err.stderr = stderr;
         err.stdout = stdout;
         return reject(err);
       }
-      resolve({ stdout, stderr });
+      resolve({ stdout: stdout || "", stderr: stderr || "" });
     });
   });
 }
 
-async function getDurationSeconds(filePath) {
-  try {
-    const { stdout } = await execFileAsync("ffprobe", [
-      "-v",
-      "error",
-      "-show_entries",
-      "format=duration",
-      "-of",
-      "default=noprint_wrappers=1:nokey=1",
-      filePath,
-    ]);
-    const dur = Number(String(stdout).trim());
-    return Number.isFinite(dur) ? dur : null;
-  } catch {
-    return null;
+async function probeMeta(videoPath) {
+  const { stdout } = await run(ffprobePath.path, [
+    "-v", "error",
+    "-show_entries", "format=duration",
+    "-of", "default=noprint_wrappers=1:nokey=1",
+    videoPath,
+  ]);
+  const duration = parseFloat(stdout.trim()) || 0;
+  return { duration };
+}
+
+function bucketText(lines) {
+  const buckets = { titles: [], lowerThirds: [], locations: [], other: [] };
+  for (const raw of lines) {
+    const t = String(raw || "").trim();
+    if (!t) continue;
+
+    const cleaned = t.replace(/\s+/g, " ");
+    const upper = cleaned.toUpperCase();
+
+    const isLocation = /\b(AZ|CA|NY|TX|FL|WA|OR|NV|UT|CO|IL|MA|NJ|PA)\b/.test(upper) || /,\s*[A-Z]{2}\b/.test(upper);
+    const isTitle = upper.includes("PRESENTS") || upper.includes("A FILM") || cleaned.length > 45;
+
+    if (isTitle) buckets.titles.push(cleaned);
+    else if (isLocation) buckets.locations.push(cleaned);
+    else if (cleaned.split(" ").length <= 4) buckets.lowerThirds.push(cleaned);
+    else buckets.other.push(cleaned);
   }
-}
 
-function toTimecode(seconds, fps = 30) {
-  const totalFrames = Math.max(0, Math.round(seconds * fps));
-  const frames = totalFrames % fps;
-  const totalSeconds = Math.floor(totalFrames / fps);
-  const s = totalSeconds % 60;
-  const totalMinutes = Math.floor(totalSeconds / 60);
-  const m = totalMinutes % 60;
-  const h = Math.floor(totalMinutes / 60);
-  const pad = (n, w = 2) => String(n).padStart(w, "0");
-  return `${pad(h)}:${pad(m)}:${pad(s)}:${pad(frames)}`;
-}
-
-async function extractFrame(videoPath, atSeconds, outPath) {
-  // -y overwrite, -ss seek, -vframes 1 single frame
-  await execFileAsync("ffmpeg", ["-y", "-ss", String(atSeconds), "-i", videoPath, "-vframes", "1", outPath]);
-}
-
-async function visionReadOverlayText(imagePath, hintText = "") {
-  const b64 = fs.readFileSync(imagePath).toString("base64");
-  const system =
-    "Return ONLY valid JSON with this exact shape: {\n" +
-    '  "shotDescription": "short visual description",\n' +
-    '  "onScreenText": [ { "text": "...", "category": "lowerThird|title|location|date|caption|other" } ]\n' +
-    "}\n" +
-    "No markdown. No extra keys. If there is no text, return an empty onScreenText array.";
-
-  const user =
-    "Analyze this video frame.\n" +
-    "1) Describe the shot in 1 sentence.\n" +
-    "2) Extract any on-screen text overlays (titles/lower thirds/location/date).\n" +
-    (hintText ? `Hint: ${hintText}\n` : "");
-
-  const resp = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    temperature: 0.2,
-    max_tokens: 500,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: system },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: user },
-          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}` } },
-        ],
-      },
-    ],
-  });
-
-  const text = resp?.choices?.[0]?.message?.content || "{}";
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { shotDescription: "", onScreenText: [] };
+  // De-dupe
+  for (const k of Object.keys(buckets)) {
+    buckets[k] = Array.from(new Set(buckets[k])).slice(0, 50);
   }
+  return buckets;
 }
 
-export default async function videoShotlist(req, res) {
+async function ocrImages(imagePaths) {
+  const worker = await createWorker("eng");
+  const results = [];
   try {
-    const { videoBase64, video, filename, fpsHint } = req.body || {};
-    // Accept either:
-    // - videoBase64 (raw base64)
-    // - video (dataURL)
-    const parsed = stripDataUrl(video) || { mime: "video/mp4", b64: videoBase64 };
+    for (const p of imagePaths) {
+      const { data } = await worker.recognize(p);
+      const text = (data?.text || "").trim();
+      const lines = text
+        .split(/\n+/)
+        .map((l) => l.trim())
+        .filter((l) => l && l.length >= 3)
+        .slice(0, 8);
+      results.push(lines);
+    }
+  } finally {
+    try { await worker.terminate(); } catch {}
+  }
+  return results;
+}
 
-    if (!parsed?.b64) {
-      return res.status(400).json({ error: "Missing videoBase64 (or video dataURL)" });
+async function detectCutsAndFrames(videoPath, outDir, threshold) {
+  // Extract frames on scene changes. showinfo prints pts_time.
+  // We write frames as jpgs: frame_0001.jpg ...
+  const framePattern = path.join(outDir, "frame_%04d.jpg");
+
+  const vf = `select='gt(scene,${threshold})',showinfo`;
+
+  const { stderr } = await run(ffmpegPath, [
+    "-hide_banner",
+    "-i", videoPath,
+    "-vf", vf,
+    "-vsync", "vfr",
+    "-q:v", "3",
+    framePattern,
+  ]);
+
+  // Parse pts_time from stderr
+  const times = [];
+  const re = /pts_time:([0-9]+\.?[0-9]*)/g;
+  let m;
+  while ((m = re.exec(stderr)) !== null) {
+    times.push(parseFloat(m[1]));
+  }
+
+  // List extracted frames
+  const frames = fs
+    .readdirSync(outDir)
+    .filter((f) => f.startsWith("frame_") && f.endsWith(".jpg"))
+    .sort();
+
+  const framePaths = frames.map((f) => path.join(outDir, f));
+
+  return { cutTimes: Array.from(new Set(times)).sort((a, b) => a - b), framePaths };
+}
+
+async function buildShotlist(videoPath, threshold) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aran-shotlist-"));
+  try {
+    const meta = await probeMeta(videoPath);
+    const duration = meta.duration || 0;
+
+    const { cutTimes, framePaths } = await detectCutsAndFrames(videoPath, tmpDir, threshold);
+
+    // Build shot intervals. Start at 0.
+    const cuts = [0, ...cutTimes.filter((t) => t > 0.05 && t < duration - 0.05), duration];
+    const fps = 30;
+
+    // Pick a representative image per shot: if we extracted frames, map them sequentially to cuts.
+    // If no frames extracted, create 1 frame at t=0.
+    let images = framePaths;
+    if (images.length === 0) {
+      const single = path.join(tmpDir, "frame_0001.jpg");
+      await run(ffmpegPath, ["-hide_banner", "-ss", "0", "-i", videoPath, "-frames:v", "1", "-q:v", "3", single]);
+      images = [single];
     }
 
-    const buf = Buffer.from(parsed.b64, "base64");
-    // Safety cap: keep server from exploding. JSON parser already caps at 80mb by default.
-    if (buf.length > 85 * 1024 * 1024) {
-      return res.status(413).json({
-        error:
-          "Video too large for this MVP upload path. Please upload a shorter clip (under ~80MB) or we can switch to multipart uploads.",
-      });
-    }
-
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aran-shotlist-"));
-    const ext = (filename && path.extname(filename)) || ".mp4";
-    const videoPath = path.join(tmpDir, `input${ext}`);
-    fs.writeFileSync(videoPath, buf);
-
-    const fps = Number.isFinite(Number(fpsHint)) ? Number(fpsHint) : 30;
-    const duration = await getDurationSeconds(videoPath);
-
-    // If we can’t probe duration, still return a single segment.
-    const shotCount = duration ? Math.min(12, Math.max(1, Math.round(duration / 6))) : 1;
-    const segmentLen = duration ? duration / shotCount : null;
+    // OCR first N frames to keep response fast
+    const maxShots = Math.min(cuts.length - 1, 60);
+    const useImages = images.slice(0, maxShots);
+    const ocrLines = await ocrImages(useImages);
 
     const shots = [];
-    for (let i = 0; i < shotCount; i++) {
-      const t0 = segmentLen ? i * segmentLen : 0;
-      const t1 = segmentLen ? Math.min(duration, (i + 1) * segmentLen) : 0;
-      const mid = segmentLen ? (t0 + t1) / 2 : 0;
+    const allText = [];
 
-      let framePath = null;
-      let vision = { shotDescription: "", onScreenText: [] };
-
-      try {
-        framePath = path.join(tmpDir, `frame_${String(i + 1).padStart(2, "0")}.jpg`);
-        await extractFrame(videoPath, mid, framePath);
-        vision = await visionReadOverlayText(framePath);
-      } catch (e) {
-        // If ffmpeg isn't available, we still return a structural shot list.
-        vision = { shotDescription: "", onScreenText: [] };
-      }
-
-      shots.push({
-        shot: i + 1,
-        tcIn: toTimecode(t0, fps),
-        tcOut: toTimecode(t1, fps),
-        description: vision?.shotDescription || "",
-        onScreenText: Array.isArray(vision?.onScreenText) ? vision.onScreenText : [],
-      });
+    for (let i = 0; i < maxShots; i++) {
+      const tcIn = secondsToTimecode(cuts[i], fps);
+      const tcOut = secondsToTimecode(cuts[i + 1], fps);
+      const lines = (ocrLines[i] || []).slice(0, 6);
+      for (const l of lines) allText.push(l);
+      shots.push({ index: i + 1, tcIn, tcOut, text: lines });
     }
 
-    // Summarize categories for convenience
-    const textAll = [];
-    for (const s of shots) {
-      for (const t of s.onScreenText || []) {
-        const txt = String(t?.text || "").trim();
-        if (!txt) continue;
-        textAll.push({
-          text: txt,
-          category: String(t?.category || "other"),
-          tcIn: s.tcIn,
-          tcOut: s.tcOut,
-          shot: s.shot,
-        });
-      }
-    }
-
-    const cleanup = () => {
-      try {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      } catch {}
-    };
-    cleanup();
-
-    return res.json({
-      filename: filename || "video",
+    return {
+      title: "Shotlist",
       durationSeconds: duration,
-      fps,
       shots,
-      onScreenText: textAll,
-      notes:
-        "MVP: This endpoint accepts base64 video (best for short clips). For long footage, we should switch to multipart uploads + background processing.",
-    });
+      textBuckets: bucketText(allText),
+    };
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+export const videoShotlistUpload = upload.single("video");
+
+export async function videoShotlistHandler(req, res) {
+  try {
+    if (!req.file) return res.status(400).json({ error: "No video uploaded" });
+    const thresholdRaw = req.body?.sceneThreshold;
+    const threshold = Math.min(0.95, Math.max(0.05, parseFloat(thresholdRaw || "0.35") || 0.35));
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aran-video-"));
+    const videoPath = path.join(tmpDir, `upload_${Date.now()}_${req.file.originalname || "video.mp4"}`);
+    fs.writeFileSync(videoPath, req.file.buffer);
+
+    const result = await buildShotlist(videoPath, threshold);
+
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+
+    return res.json(result);
   } catch (err) {
-    console.error("video shotlist error:", err);
-    return res.status(500).json({ error: err?.message || "Shotlist generation failed" });
+    console.error("/video/shotlist error:", err);
+    return res.status(500).json({ error: "Failed to generate shotlist" });
   }
 }
