@@ -1,40 +1,42 @@
 import { openai } from "../utils/openaiClient.js";
 
-function stripDataUrl(dataUrl) {
-  if (!dataUrl) return null;
-  const m = String(dataUrl).match(/^data:(image\/\w+);base64,(.+)$/);
-  if (!m) return null;
-  return { mime: m[1], b64: m[2] };
+function extractB64(img) {
+  if (!img) return "";
+  if (img.includes("base64,")) return img.split("base64,")[1] || "";
+  return img;
+}
+
+function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 export default async function whiteboardInterpret(req, res) {
   try {
     const { image, contentTypeHint, intent } = req.body || {};
-    const parsed = stripDataUrl(image) || { mime: "image/png", b64: image };
 
-    if (!parsed?.b64) {
-      return res.status(400).json({ error: "Missing image (dataURL or base64)" });
+    if (!image || typeof image !== "string") {
+      return res.status(400).json({ error: "Missing image" });
     }
 
+    const b64 = extractB64(image);
+
     const system =
-      "You are Aran, a story engine. Return ONLY valid JSON with this exact shape: " +
-      "{\n" +
-      "  \"title\": \"short title\",\n" +
-      "  \"contentType\": \"film|commercial|doc|music video|storybook|podcast|other\",\n" +
-      "  \"prompt\": \"refined prompt/brief\",\n" +
-      "  \"beats\": [\"beat 1\", \"beat 2\", \"...\"]\n" +
-      "}\n" +
-      "No markdown. No extra keys. Beats must be visual, filmable, ordered.";
+      "You are Aran, a story engine for filmmakers and creatives. " +
+      "Interpret a user sketch and turn it into a concise, usable story brief.";
 
     const userText =
-      `Interpret this sketch and turn it into a strong creative brief and beats.\n` +
-      `Optional content type hint: ${contentTypeHint || ""}\n` +
-      `User intent: ${intent || ""}`;
+      `Content type hint: ${contentTypeHint || "(none)"}\n` +
+      `User intent: ${intent || "Turn this sketch into a story prompt and beats."}\n\n` +
+      "Return ONLY valid JSON with keys: title, contentType, prompt, beats (array of 6-12 strings).";
 
-    const resp = await openai.chat.completions.create({
+    const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      temperature: 0.4,
-      max_tokens: 700,
+      temperature: 0.6,
+      max_tokens: 800,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: system },
@@ -42,44 +44,30 @@ export default async function whiteboardInterpret(req, res) {
           role: "user",
           content: [
             { type: "text", text: userText },
-            {
-              type: "image_url",
-              image_url: { url: `data:${parsed.mime};base64,${parsed.b64}` },
-            },
+            { type: "image_url", image_url: { url: `data:image/png;base64,${b64}` } },
           ],
         },
       ],
     });
 
-    const text = resp?.choices?.[0]?.message?.content || "{}";
-    let json;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      json = null;
+    const content = completion?.choices?.[0]?.message?.content || "";
+    const parsed = safeJsonParse(content);
+
+    if (!parsed) {
+      return res.json({ raw: content });
     }
 
-    if (!json) {
-      return res.status(502).json({ error: "Model returned invalid JSON", raw: text });
-    }
+    // Normalize
+    const beats = Array.isArray(parsed.beats) ? parsed.beats.filter(Boolean).slice(0, 16) : [];
 
-    const title = String(json.title || "Untitled").slice(0, 140);
-    const contentType = String(json.contentType || "other").slice(0, 48);
-    const prompt = String(json.prompt || "").trim();
-    const beats = Array.isArray(json.beats)
-      ? json.beats.map((b) => String(b).trim()).filter(Boolean).slice(0, 12)
-      : [];
-
-    if (!prompt || beats.length < 3) {
-      return res.status(502).json({
-        error: "Model returned an incomplete result",
-        raw: json,
-      });
-    }
-
-    return res.json({ title, contentType, prompt, beats });
+    return res.json({
+      title: parsed.title || "",
+      contentType: parsed.contentType || "",
+      prompt: parsed.prompt || "",
+      beats,
+    });
   } catch (err) {
-    console.error("whiteboard interpret error:", err);
-    return res.status(500).json({ error: err?.message || "Whiteboard interpret failed" });
+    console.error("/whiteboard/interpret error:", err);
+    return res.status(500).json({ error: "Failed to interpret sketch" });
   }
 }
