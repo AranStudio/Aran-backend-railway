@@ -156,15 +156,27 @@ async function detectCutsAdaptive(videoPath, outDir, threshold) {
 
 async function extractKeyframe(videoPath, outPath, atSeconds) {
   const ss = String(Math.max(0, atSeconds));
+  // Extract a small still for UI display (keeps response sizes sane).
   await run(ffmpegPath, [
     "-hide_banner",
     "-ss", ss,
     "-i", videoPath,
     "-frames:v", "1",
-    "-q:v", "3",
+    "-vf", "scale=360:-1",
+    "-q:v", "6",
     outPath,
   ]);
   return outPath;
+}
+
+function fileToDataUrl(p) {
+  try {
+    const buf = fs.readFileSync(p);
+    const b64 = buf.toString("base64");
+    return `data:image/jpeg;base64,${b64}`;
+  } catch {
+    return null;
+  }
 }
 
 async function extractKeyframesForShots(videoPath, outDir, cuts, maxShots) {
@@ -205,8 +217,9 @@ async function buildShotlist(videoPath, threshold) {
       const tcIn = secondsToTimecode(cuts[i], fps);
       const tcOut = secondsToTimecode(cuts[i + 1], fps);
       const lines = (ocrLines[i] || []).slice(0, 6);
+      const still = fileToDataUrl(shotKeyframes[i]);
       for (const l of lines) allText.push(l);
-      shots.push({ index: i + 1, tcIn, tcOut, text: lines });
+      shots.push({ index: i + 1, tcIn, tcOut, text: lines, still });
     }
 
     return {
