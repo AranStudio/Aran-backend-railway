@@ -9,29 +9,70 @@ function getStripe() {
   return _stripeClient;
 }
 
-// Default product IDs (fallback). You can override via env vars.
-const DEFAULT_PRODUCTS = {
-  director: process.env.STRIPE_PRODUCT_DIRECTOR || "prod_TcheO3yxXePdu0",
-  studio: process.env.STRIPE_PRODUCT_STUDIO || "prod_TchK2nhVt9Fadw",
+const PRICE_IDS = {
+  director: process.env.STRIPE_PRICE_DIRECTOR || "",
+  studio: process.env.STRIPE_PRICE_STUDIO || "",
 };
 
-// Pick a recurring price for a product.
-// Prefers interval passed (month/year). Falls back to any active recurring price.
-async function pickPriceId(stripe, productId, interval = "month") {
-  const prices = await stripe.prices.list({ product: productId, active: true, limit: 20 });
+const DEFAULT_SUCCESS_URL =
+  process.env.CHECKOUT_SUCCESS_URL || "https://www.aran.studio/pricing";
+const DEFAULT_CANCEL_URL =
+  process.env.CHECKOUT_CANCEL_URL || "https://www.aran.studio/pricing";
 
-  const recurring = (prices.data || []).filter((p) => !!p.recurring);
-  const exact = recurring.find((p) => p.recurring?.interval === interval);
-  if (exact) return exact.id;
+const priceModeCache = new Map();
 
-  // If no exact match, prefer monthly, then yearly, then first recurring.
-  const monthly = recurring.find((p) => p.recurring?.interval === "month");
-  if (monthly) return monthly.id;
-  const yearly = recurring.find((p) => p.recurring?.interval === "year");
-  if (yearly) return yearly.id;
-
-  if (recurring[0]) return recurring[0].id;
+function validatePriceId(plan, priceId) {
+  if (!priceId) {
+    return `Missing STRIPE_PRICE_${plan.toUpperCase()} for plan '${plan}'.`;
+  }
+  if (!priceId.startsWith("price_")) {
+    return `Invalid STRIPE_PRICE_${plan.toUpperCase()} (must be a Stripe price_ ID).`;
+  }
   return null;
+}
+
+function getStripeMode() {
+  const key = process.env.STRIPE_SECRET_KEY || "";
+  if (key.startsWith("sk_live_")) return "live";
+  if (key.startsWith("sk_test_")) return "test";
+  return null;
+}
+
+async function ensurePriceMatchesMode(stripe, priceId) {
+  if (!priceId || priceModeCache.has(priceId)) return;
+  const expectedMode = getStripeMode();
+  if (!expectedMode) return;
+
+  try {
+    const price = await stripe.prices.retrieve(priceId);
+    const priceMode = price?.livemode ? "live" : "test";
+    if (priceMode !== expectedMode) {
+      throw new Error(
+        `Stripe price ${priceId} is ${priceMode} but STRIPE_SECRET_KEY is ${expectedMode}. ` +
+          "Check that your test/live price IDs match the API key mode."
+      );
+    }
+    priceModeCache.set(priceId, priceMode);
+  } catch (err) {
+    const msg = err?.message || "Unable to retrieve Stripe price";
+    throw new Error(
+      `${msg}. Verify the price ID exists in the same Stripe mode as STRIPE_SECRET_KEY.`
+    );
+  }
+}
+
+function appendCheckoutStatus(baseUrl, status) {
+  const safeBase = String(baseUrl || "").trim();
+  if (!safeBase) return safeBase;
+
+  try {
+    const url = new URL(safeBase);
+    url.searchParams.set("checkout", status);
+    return url.toString();
+  } catch {
+    const joiner = safeBase.includes("?") ? "&" : "?";
+    return `${safeBase}${joiner}checkout=${encodeURIComponent(status)}`;
+  }
 }
 
 export default async function createCheckoutSession(req, res) {
@@ -48,22 +89,24 @@ export default async function createCheckoutSession(req, res) {
     const interval = String(body.interval || "month").trim().toLowerCase();
     const userId = String(body.userId || "").trim();
     const email = String(body.email || "").trim();
-    const successUrl = body.successUrl || process.env.CHECKOUT_SUCCESS_URL || "https://www.aran.studio";
-    const cancelUrl = body.cancelUrl || process.env.CHECKOUT_CANCEL_URL || "https://www.aran.studio";
+    const baseSuccessUrl = body.successUrl || DEFAULT_SUCCESS_URL;
+    const baseCancelUrl = body.cancelUrl || DEFAULT_CANCEL_URL;
+    const successUrl = appendCheckoutStatus(baseSuccessUrl, "success");
+    const cancelUrl = appendCheckoutStatus(baseCancelUrl, "cancel");
 
-    if (!plan || !DEFAULT_PRODUCTS[plan]) {
+    if (!plan || !Object.prototype.hasOwnProperty.call(PRICE_IDS, plan)) {
       return res.status(400).json({ error: "Invalid plan. Use 'director' or 'studio'." });
     }
     if (!email) return res.status(400).json({ error: "Missing email." });
     if (!userId) return res.status(400).json({ error: "Missing userId." });
 
-    const productId = DEFAULT_PRODUCTS[plan];
-    const priceId = await pickPriceId(stripe, productId, interval);
-    if (!priceId) {
-      return res.status(400).json({
-        error:
-          "No active recurring price found for this product in Stripe. Create an active monthly (or yearly) recurring price.",
-      });
+    const priceId = PRICE_IDS[plan];
+    const priceError = validatePriceId(plan, priceId);
+    if (priceError) return res.status(400).json({ error: priceError });
+    try {
+      await ensurePriceMatchesMode(stripe, priceId);
+    } catch (err) {
+      return res.status(400).json({ error: err?.message || "Stripe price mode mismatch." });
     }
 
     const session = await stripe.checkout.sessions.create({
@@ -72,8 +115,8 @@ export default async function createCheckoutSession(req, res) {
       customer_email: email,
       client_reference_id: userId,
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: successUrl + "?checkout=success",
-      cancel_url: cancelUrl + "?checkout=cancel",
+      success_url: successUrl,
+      cancel_url: cancelUrl,
       subscription_data: {
         metadata: {
           userId,

@@ -17,6 +17,33 @@ function getSupabaseAdmin() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
+const PRICE_IDS = {
+  director: process.env.STRIPE_PRICE_DIRECTOR || "",
+  studio: process.env.STRIPE_PRICE_STUDIO || "",
+};
+
+const PRICE_ID_TO_PLAN = Object.fromEntries(
+  Object.entries(PRICE_IDS)
+    .filter(([, id]) => id && id.startsWith("price_"))
+    .map(([plan, id]) => [id, plan])
+);
+
+function normalizePlan(plan) {
+  const safe = String(plan || "").trim().toLowerCase();
+  return safe === "director" || safe === "studio" ? safe : "";
+}
+
+function resolvePlanFromSubscription(sub) {
+  const items = sub?.items?.data || [];
+  for (const item of items) {
+    const priceId = typeof item?.price === "string" ? item.price : item?.price?.id;
+    if (priceId && PRICE_ID_TO_PLAN[priceId]) {
+      return PRICE_ID_TO_PLAN[priceId];
+    }
+  }
+  return "";
+}
+
 async function upsertPlan(supabase, payload) {
   // Requires profiles columns: plan, stripe_customer_id, stripe_subscription_id, subscription_status, current_period_end
   const { error } = await supabase.from("profiles").upsert(payload, { onConflict: "id" });
@@ -47,50 +74,71 @@ export default async function stripeWebhook(req, res) {
       return res.status(200).json({ received: true });
     }
 
-    // Helper to resolve userId/plan from event objects
+    // Helper to resolve userId from event objects
     const extractMeta = (obj) => {
       const userId = obj?.metadata?.userId || obj?.client_reference_id || "";
-      const plan = obj?.metadata?.plan || "";
-      return { userId, plan };
+      return { userId };
     };
 
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
-      const { userId, plan } = extractMeta(session);
+      const { userId } = extractMeta(session);
       const customerId = session.customer;
       const subscriptionId = session.subscription;
 
-      if (userId && plan) {
+      if (userId) {
         // Fetch subscription to get status + period end
         let sub = null;
         try {
           sub = subscriptionId ? await stripe.subscriptions.retrieve(subscriptionId) : null;
         } catch (e) {}
 
-        await upsertPlan(supabase, {
+        const planFromSub = sub ? resolvePlanFromSubscription(sub) : "";
+        const fallbackPlan = normalizePlan(session?.metadata?.plan);
+        const resolvedPlan = planFromSub || fallbackPlan;
+        if (!planFromSub && fallbackPlan) {
+          console.warn(
+            "Stripe webhook: falling back to session metadata plan; price ID did not match env."
+          );
+        }
+
+        const payload = {
           id: userId,
-          plan,
           stripe_customer_id: customerId || null,
           stripe_subscription_id: subscriptionId || null,
           subscription_status: sub?.status || "active",
           current_period_end: sub?.current_period_end ? new Date(sub.current_period_end * 1000).toISOString() : null,
-        });
+        };
+        if (resolvedPlan) payload.plan = resolvedPlan;
+
+        await upsertPlan(supabase, payload);
       }
     }
 
     if (event.type === "customer.subscription.updated" || event.type === "customer.subscription.created") {
       const sub = event.data.object;
-      const { userId, plan } = extractMeta(sub);
+      const { userId } = extractMeta(sub);
 
       if (userId) {
-        await upsertPlan(supabase, {
+        const planFromSub = resolvePlanFromSubscription(sub);
+        const fallbackPlan = normalizePlan(sub?.metadata?.plan);
+        const resolvedPlan = planFromSub || fallbackPlan;
+        if (!planFromSub && fallbackPlan) {
+          console.warn(
+            "Stripe webhook: falling back to subscription metadata plan; price ID did not match env."
+          );
+        }
+
+        const payload = {
           id: userId,
-          plan: plan || null,
           stripe_customer_id: sub.customer || null,
           stripe_subscription_id: sub.id || null,
           subscription_status: sub.status || null,
           current_period_end: sub.current_period_end ? new Date(sub.current_period_end * 1000).toISOString() : null,
-        });
+        };
+        if (resolvedPlan) payload.plan = resolvedPlan;
+
+        await upsertPlan(supabase, payload);
       }
     }
 
