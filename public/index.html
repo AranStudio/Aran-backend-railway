@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aran Studio</title>
+    <meta
+      name="description"
+      content="Aran Studio tools for shot lists, storyboards, and AI storytelling."
+    />
+    <style>
+      body {
+        font-family: Arial, Helvetica, sans-serif;
+        margin: 0;
+        padding: 0;
+        color: #111827;
+        background: #f9fafb;
+      }
+      .container {
+        max-width: 720px;
+        margin: 64px auto;
+        padding: 0 24px;
+      }
+      h1 {
+        font-size: 2rem;
+        margin-bottom: 16px;
+      }
+      p {
+        line-height: 1.6;
+        margin: 0 0 12px;
+      }
+      .meta {
+        color: #6b7280;
+        font-size: 0.95rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="container">
+      <h1 id="page-title">Aran Studio</h1>
+      <p id="page-description">
+        Creative tools for shot lists, storyboards, and AI storytelling.
+      </p>
+      <p class="meta">
+        This page is available on direct navigation and deep links.
+      </p>
+    </main>
+    <script>
+      (function () {
+        var routes = {
+          "/shot-list-tool": {
+            title: "Shot List Tool",
+            description: "Build a clean shot list quickly with Aran Studio."
+          },
+          "/best-shot-list-tool": {
+            title: "Best Shot List Tool",
+            description: "Compare shot list workflows and pick the best tool."
+          },
+          "/story-tool": {
+            title: "Story Tool",
+            description: "Outline and refine story beats with Aran Studio."
+          },
+          "/ai-story-tool": {
+            title: "AI Story Tool",
+            description: "Generate and polish story ideas with AI guidance."
+          },
+          "/compare/aran-vs-studiobinder": {
+            title: "Aran vs StudioBinder",
+            description:
+              "See how Aran compares for shot lists and story planning."
+          },
+          "/compare": {
+            title: "Aran Comparison",
+            description: "Compare Aran with other filmmaking tools."
+          }
+        };
+
+        var path = window.location.pathname.replace(/\/$/, "") || "/";
+        var match = routes[path];
+
+        if (!match && path.indexOf("/compare/") === 0) {
+          match = {
+            title: "Aran Comparison",
+            description: "Compare Aran with other filmmaking tools."
+          };
+        }
+
+        if (!match) {
+          match = {
+            title: "Aran Studio",
+            description:
+              "Creative tools for shot lists, storyboards, and AI storytelling."
+          };
+        }
+
+        document.title = match.title + " | Aran Studio";
+
+        var titleEl = document.getElementById("page-title");
+        var descEl = document.getElementById("page-description");
+
+        if (titleEl) {
+          titleEl.textContent = match.title;
+        }
+        if (descEl) {
+          descEl.textContent = match.description;
+        }
+      })();
+    </script>
+  </body>
+</html>
