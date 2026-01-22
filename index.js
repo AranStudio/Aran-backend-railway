@@ -1,5 +1,7 @@
 import "dotenv/config";
 import express from "express";
+import path from "path";
+import { fileURLToPath } from "url";
 import router from "./routes/router.js";
 import stripeWebhook from "./routes/stripeWebhook.js";
 
@@ -9,6 +11,21 @@ import stripeWebhook from "./routes/stripeWebhook.js";
  */
 
 const app = express();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const publicDir = path.join(__dirname, "public");
+
+const seoRoutes = [
+  "/shot-list-tool",
+  "/best-shot-list-tool",
+  "/story-tool",
+  "/ai-story-tool",
+  "/compare",
+  "/compare/aran-vs-studiobinder",
+];
+
+function sendSpaIndex(_req, res) {
+  return res.sendFile(path.join(publicDir, "index.html"));
+}
 
 /* -------------------- CORS -------------------- */
 const staticAllowedOrigins = [
@@ -106,6 +123,14 @@ app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), stri
 /* -------------------- Body parsing -------------------- */
 // Large payload support (base64 images can be big)
 app.use(express.json({ limit: process.env.JSON_LIMIT || "80mb" }));
+
+/* -------------------- Static + SEO SPA -------------------- */
+app.use(express.static(publicDir, { index: false }));
+app.get(seoRoutes, sendSpaIndex);
+app.get("/compare", sendSpaIndex);
+app.get("/compare/*", sendSpaIndex);
+app.get("/app", sendSpaIndex);
+app.get("/app/*", sendSpaIndex);
 
 /* -------------------- Routes -------------------- */
 app.use("/api", router);
