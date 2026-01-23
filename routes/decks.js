@@ -39,12 +39,31 @@ function dbForReq(req) {
   return supabaseService || supabaseUserDb(req.accessToken);
 }
 
+/**
+ * Safely extract tool type from a deck row.
+ * Falls back to deriving from content if tool column is missing.
+ */
+function safeGetTool(row) {
+  // If tool column exists and has a valid value, use it
+  if (row?.tool && typeof row.tool === "string") {
+    return row.tool;
+  }
+  // Fall back to content.tool (set by normalizeDeckPayload)
+  if (row?.content?.tool && typeof row.content.tool === "string") {
+    return row.content.tool;
+  }
+  // Default fallback
+  return "story_engine";
+}
+
 function decorateShareMeta(row) {
   if (!row?.content) return row;
   const normalized = normalizeDeckPayload(row.content);
   const shareUrl = buildShareUrl(normalized.shareCode);
   const mailto = shareEmailTemplate({ title: normalized.title, shareUrl });
-  return { ...row, shareUrl, mailto };
+  // Always include tool field, derived safely from content
+  const tool = safeGetTool(row);
+  return { ...row, tool, shareUrl, mailto };
 }
 
 async function requireUser(req, res, next) {
@@ -70,9 +89,11 @@ router.get("/", requireUser, async (req, res) => {
     const userId = req.user.id;
     const db = dbForReq(req);
 
+    // Note: We don't select 'tool' column directly to avoid schema cache errors
+    // The tool is derived from content.tool via decorateShareMeta
     const { data, error } = await db
       .from("decks")
-      .select("id,title,content,created_at,export_pdf_url,prompt,tool")
+      .select("id,title,content,created_at,export_pdf_url,prompt")
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
 
@@ -91,9 +112,11 @@ router.get("/:id", requireUser, async (req, res) => {
     const deckId = req.params.id;
     const db = dbForReq(req);
 
+    // Note: We don't select 'tool' column directly to avoid schema cache errors
+    // The tool is derived from content.tool via decorateShareMeta
     const { data, error } = await db
       .from("decks")
-      .select("id,title,content,created_at,export_pdf_url,prompt,tool")
+      .select("id,title,content,created_at,export_pdf_url,prompt")
       .eq("user_id", userId)
       .eq("id", deckId)
       .single();
@@ -136,35 +159,58 @@ router.post("/save", requireUser, async (req, res) => {
       }
     }
 
+    // Note: tool is stored in content.tool rather than a separate column
+    // to avoid schema cache errors if the 'tool' column doesn't exist yet.
+    // When the column exists, we can optionally set it for indexing.
+    const toolValue = normalized.tool || "story_engine";
+    const contentWithTitle = { ...normalized, title, tool: toolValue };
+    
     const row = {
       ...(id ? { id } : {}),
       user_id: userId,
       title,
       prompt: normalized.prompt || "",
-      tool: normalized.tool || "story_engine", // ✅ Include tool field
       export_pdf_url: src.export_pdf_url || body.export_pdf_url || null,
-      content: { ...normalized, title }, // ✅ Ensure title is in content too
+      content: contentWithTitle,
     };
+
+    // Helper to try setting tool column if it exists
+    async function saveWithOptionalToolColumn(operation) {
+      // First try with tool column
+      const rowWithTool = { ...row, tool: toolValue };
+      const result = await operation(rowWithTool);
+      
+      // If error mentions 'tool' column not found, retry without it
+      if (result.error?.message?.includes("tool") && result.error?.message?.includes("schema")) {
+        console.warn("Tool column not found in schema, saving without it. Tool is stored in content.tool.");
+        return operation(row);
+      }
+      return result;
+    }
 
     // Prefer update-then-insert to avoid cross-user overwrite with service key
     if (id) {
-      const { data: updated, error: updateError } = await db
-        .from("decks")
-        .update(row)
-        .eq("user_id", userId)
-        .eq("id", id)
-        .select("id,title,content,created_at,export_pdf_url,prompt,tool")
-        .single();
+      const { data: updated, error: updateError } = await saveWithOptionalToolColumn(
+        (r) => db
+          .from("decks")
+          .update(r)
+          .eq("user_id", userId)
+          .eq("id", id)
+          .select("id,title,content,created_at,export_pdf_url,prompt")
+          .single()
+      );
 
       if (!updateError && updated)
         return res.json({ ok: true, deck: decorateShareMeta(updated) });
     }
 
-    const { data, error } = await db
-      .from("decks")
-      .insert(row)
-      .select("id,title,content,created_at,export_pdf_url,prompt,tool")
-      .single();
+    const { data, error } = await saveWithOptionalToolColumn(
+      (r) => db
+        .from("decks")
+        .insert(r)
+        .select("id,title,content,created_at,export_pdf_url,prompt")
+        .single()
+    );
 
     if (error) throw error;
     return res.json({ ok: true, deck: decorateShareMeta(data) });
@@ -195,12 +241,14 @@ router.post("/:id/share", requireUser, async (req, res) => {
     const shareUrl = buildShareUrl(updatedContent.shareCode);
     const mailto = shareEmailTemplate({ title: updatedContent.title, shareUrl });
 
+    // Note: We don't select 'tool' column directly to avoid schema cache errors
+    // The tool is derived from content.tool via decorateShareMeta
     const { data, error } = await db
       .from("decks")
       .update({ content: updatedContent })
       .eq("user_id", userId)
       .eq("id", deckId)
-      .select("id,title,content,created_at,export_pdf_url,prompt,tool")
+      .select("id,title,content,created_at,export_pdf_url,prompt")
       .single();
 
     if (error) throw error;
