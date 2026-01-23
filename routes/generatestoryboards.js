@@ -42,7 +42,6 @@ Beat ${i + 1}: ${beat}
         model: "gpt-image-1",
         prompt: imgPrompt,
         size: "1024x1024",
-        response_format: "b64_json",
       });
 
       const b64 = img?.data?.[0]?.b64_json;
@@ -55,13 +54,10 @@ Beat ${i + 1}: ${beat}
 
     return res.json({ frames });
   } catch (err) {
-    console.error("generateStoryboards error:", err?.error || err);
-
-    const msg =
-      err?.error?.message ||
-      err?.message ||
-      "Storyboards failed";
-
-    return res.status(err?.status || 500).json({ error: msg });
+    console.error("generateStoryboards error:", err);
+    if (err.status === 400) {
+      return res.status(400).json({ error: err.message });
+    }
+    return res.status(500).json({ error: "Generation failed" });
   }
 }
