@@ -24,6 +24,55 @@ import { regenerateSingleBeat } from "../services/storyIntelligence/beatGenerato
 import { critiqueBeats } from "../services/storyIntelligence/critic.js";
 
 /**
+ * Normalizes a generation result for frontend compatibility.
+ * Critical: adds `text` alias for `beatText` (required by frontend)
+ * and `title` alias for `name` in altConcepts.
+ * 
+ * @param {Object} result - The raw generation result
+ * @returns {Object} - Normalized result with both beatText and text fields
+ */
+function normalizeGenerationOutput(result) {
+  const out = {
+    ...result,
+    beats: Array.isArray(result?.beats)
+      ? result.beats.map((b, i) => ({
+          ...b,
+          // ✅ add `text` alias required by frontend (keep beatText for backwards compat)
+          text: b.text ?? b.beatText ?? "",
+          id: b.id ?? i + 1,
+        }))
+      : [],
+    altConcepts: Array.isArray(result?.altConcepts)
+      ? result.altConcepts.map((c) => ({
+          ...c,
+          // optional alias for frontend
+          title: c.title ?? c.name ?? "",
+        }))
+      : [],
+  };
+  return out;
+}
+
+/**
+ * Validates a normalized generation output and returns error info if invalid.
+ * @param {Object} out - Normalized output from normalizeGenerationOutput
+ * @returns {{ valid: boolean, errorInfo?: Object }}
+ */
+function validateGenerationOutput(out) {
+  if (!out.title || !Array.isArray(out.beats) || out.beats.length === 0 || !out.beats[0].text) {
+    return {
+      valid: false,
+      errorInfo: {
+        hasTitle: !!out.title,
+        beatsLen: out.beats?.length,
+        firstBeatKeys: out.beats?.[0] ? Object.keys(out.beats[0]) : null,
+      },
+    };
+  }
+  return { valid: true };
+}
+
+/**
  * Main handler for story intelligence generation
  * 
  * Request body:
@@ -131,11 +180,29 @@ export async function storyIntelligenceGenerate(req, res) {
       metadata: result.metadata,
     };
 
-    if (isDev) {
-      console.log("[DEV] /story/intelligence/generate SUCCESS - returning", response.beats.length, "beats");
+    // ✅ Normalize output for frontend compatibility (adds text alias for beatText)
+    const out = normalizeGenerationOutput(response);
+
+    // ✅ Validate output - return 502 if missing title/beats/text
+    const outputValidation = validateGenerationOutput(out);
+    if (!outputValidation.valid) {
+      console.error("INVALID_GENERATION_OUTPUT", outputValidation.errorInfo);
+      return res.status(502).json({
+        success: false,
+        error: "Invalid generation output (missing beats/text)",
+      });
     }
 
-    return res.json(response);
+    // Log to confirm deploy is live
+    console.log("GENERATE_RESPONSE_KEYS", {
+      beat0Keys: out.beats?.[0] ? Object.keys(out.beats[0]) : [],
+    });
+
+    if (isDev) {
+      console.log("[DEV] /story/intelligence/generate SUCCESS - returning", out.beats.length, "beats");
+    }
+
+    return res.status(200).json(out);
   } catch (error) {
     console.error("Story Intelligence error:", error);
 
@@ -256,7 +323,8 @@ export async function storyIntelligenceApplyConcept(req, res) {
       console.log("[DEV] Beat names:", result.beats.map(b => b.name).join(", "));
     }
 
-    return res.json({
+    // Format response
+    const response = {
       success: true,
       title: result.title,
       story_type: body.storyType || "general", // REQUIRED - never undefined
@@ -265,7 +333,27 @@ export async function storyIntelligenceApplyConcept(req, res) {
       altConcepts: result.altConcepts, // Optional - new alt concepts (but not primary output)
       critique: result.critique,
       metadata: result.metadata,
+    };
+
+    // ✅ Normalize output for frontend compatibility (adds text alias for beatText)
+    const out = normalizeGenerationOutput(response);
+
+    // ✅ Validate output - return 502 if missing title/beats/text
+    const outputValidation = validateGenerationOutput(out);
+    if (!outputValidation.valid) {
+      console.error("INVALID_GENERATION_OUTPUT (apply-concept)", outputValidation.errorInfo);
+      return res.status(502).json({
+        success: false,
+        error: "Invalid generation output (missing beats/text)",
+      });
+    }
+
+    // Log to confirm deploy is live
+    console.log("APPLY_CONCEPT_RESPONSE_KEYS", {
+      beat0Keys: out.beats?.[0] ? Object.keys(out.beats[0]) : [],
     });
+
+    return res.status(200).json(out);
   } catch (error) {
     console.error("Apply concept error:", error);
     return res.status(500).json({
@@ -344,10 +432,21 @@ export async function storyIntelligenceRegenerateBeat(req, res) {
       }
     }
 
+    // ✅ Normalize updatedBeat to add text alias for frontend compatibility
+    const normalizedBeat = {
+      ...updatedBeat,
+      text: updatedBeat.text ?? updatedBeat.beatText ?? "",
+    };
+
+    // Log to confirm deploy is live
+    console.log("REGENERATE_BEAT_RESPONSE_KEYS", {
+      beatKeys: Object.keys(normalizedBeat),
+    });
+
     return res.json({
       success: true,
       story_type: body.storyType || "general", // REQUIRED - never undefined
-      updatedBeat,
+      updatedBeat: normalizedBeat,
       critique,
     });
   } catch (error) {
