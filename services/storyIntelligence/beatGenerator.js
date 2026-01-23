@@ -286,4 +286,110 @@ Follow all other profile requirements strictly.`;
   });
 }
 
-export default { generateBeats, regenerateBeats };
+/**
+ * Regenerate a single beat without regenerating the entire story
+ * @param {Object} params - Regeneration parameters
+ * @returns {Promise<Object>} - The updated beat object
+ */
+export async function regenerateSingleBeat({
+  beatId,
+  currentBeat,
+  profile,
+  prompt,
+  brand,
+  allBeats = [],
+  beatContext = {},
+  controls = {},
+}) {
+  // Get context from surrounding beats
+  const beatIndex = allBeats.findIndex((b) => b.id === beatId || b.id === Number(beatId));
+  const prevBeat = beatIndex > 0 ? allBeats[beatIndex - 1] : null;
+  const nextBeat = beatIndex < allBeats.length - 1 ? allBeats[beatIndex + 1] : null;
+
+  const contextNotes = [];
+  if (prevBeat) {
+    contextNotes.push(`Previous beat: "${prevBeat.name}" - ${prevBeat.beatText?.substring(0, 100)}...`);
+  }
+  if (nextBeat) {
+    contextNotes.push(`Next beat: "${nextBeat.name}" - ${nextBeat.beatText?.substring(0, 100)}...`);
+  }
+
+  const formatGuidance = FORMAT_GUIDANCE[profile?.format] || FORMAT_GUIDANCE.commercial;
+
+  const systemPrompt = `You are regenerating a SINGLE story beat. Keep it consistent with the overall story while making this specific beat fresh and compelling.
+
+STORY PROFILE:
+- Structure: ${profile?.structure || "three_act"}
+- Arc: ${profile?.arc || "positive_change"}
+- Tone: ${profile?.tone || "hopeful"}
+- Brand Role: ${profile?.brand_role || "background_presence"}
+
+FORMAT GUIDANCE: ${formatGuidance}
+
+CONTEXT:
+${contextNotes.join("\n")}
+
+${beatContext?.instructions ? `SPECIFIC INSTRUCTIONS: ${beatContext.instructions}` : ""}
+${controls?.creativityLevel ? `CREATIVITY LEVEL: ${controls.creativityLevel}` : ""}
+
+Respond with ONLY valid JSON:
+{
+  "beat": {
+    "id": ${currentBeat?.id || beatId},
+    "name": "meaningful beat name (not Beat N)",
+    "intent": "what this beat accomplishes",
+    "beatText": "detailed beat description",
+    "cameraNotes": "optional camera direction",
+    "audioNotes": "optional sound direction",
+    "onScreenText": "optional text that appears",
+    "brandIntegration": "how brand appears (if applicable)"
+  }
+}`;
+
+  const userPrompt = `Regenerate this beat:
+
+CURRENT BEAT NAME: ${currentBeat?.name || `Beat ${beatId}`}
+CURRENT BEAT TEXT: ${currentBeat?.beatText || ""}
+
+STORY PROMPT: ${prompt}
+${brand ? `BRAND: ${brand}` : ""}
+
+Create a fresh version of this beat that:
+1. Maintains story continuity with surrounding beats
+2. Is more specific and vivid
+3. Has a meaningful, story-appropriate name
+4. Serves the overall narrative arc`;
+
+  const result = await chatCompletion({
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    model: "gpt-4o",
+    responseFormat: { type: "json_object" },
+    temperature: controls?.temperature || 0.8,
+    maxTokens: 800,
+  });
+
+  const parsed = safeJsonParse(result.text);
+
+  if (!parsed || !parsed.beat) {
+    throw new Error("Failed to parse regenerated beat from LLM response");
+  }
+
+  // Normalize the beat
+  const updatedBeat = {
+    id: parsed.beat.id || currentBeat?.id || beatId,
+    name: parsed.beat.name || currentBeat?.name || `Beat ${beatId}`,
+    intent: parsed.beat.intent || "",
+    beatText: parsed.beat.beatText || "",
+    cameraNotes: parsed.beat.cameraNotes || null,
+    audioNotes: parsed.beat.audioNotes || null,
+    onScreenText: parsed.beat.onScreenText || null,
+    brandIntegration: parsed.beat.brandIntegration || null,
+  };
+
+  return updatedBeat;
+}
+
+export default { generateBeats, regenerateBeats, regenerateSingleBeat };

@@ -72,7 +72,7 @@ router.get("/", requireUser, async (req, res) => {
 
     const { data, error } = await db
       .from("decks")
-      .select("id,title,content,created_at,export_pdf_url,prompt")
+      .select("id,title,content,created_at,export_pdf_url,prompt,tool")
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
 
@@ -93,7 +93,7 @@ router.get("/:id", requireUser, async (req, res) => {
 
     const { data, error } = await db
       .from("decks")
-      .select("id,title,content,created_at,export_pdf_url,prompt")
+      .select("id,title,content,created_at,export_pdf_url,prompt,tool")
       .eq("user_id", userId)
       .eq("id", deckId)
       .single();
@@ -116,13 +116,34 @@ router.post("/save", requireUser, async (req, res) => {
     const normalized = normalizeDeckPayload(src);
     const { id } = normalized;
 
+    // Generate a title if missing (prevent "Untitled" stories)
+    let title = normalized.title;
+    if (!title || title.toLowerCase() === "untitled") {
+      // Try to create a title from prompt or beats
+      if (normalized.prompt) {
+        const words = normalized.prompt
+          .replace(/[^a-zA-Z0-9\s]/g, "")
+          .split(/\s+/)
+          .filter((w) => w.length > 3)
+          .slice(0, 3);
+        if (words.length >= 2) {
+          title = words.slice(0, 2).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+        } else {
+          title = `Story ${Date.now().toString(36).slice(-4).toUpperCase()}`;
+        }
+      } else {
+        title = `Story ${Date.now().toString(36).slice(-4).toUpperCase()}`;
+      }
+    }
+
     const row = {
       ...(id ? { id } : {}),
       user_id: userId,
-      title: normalized.title || "Untitled",
+      title,
       prompt: normalized.prompt || "",
+      tool: normalized.tool || "story_engine", // ✅ Include tool field
       export_pdf_url: src.export_pdf_url || body.export_pdf_url || null,
-      content: { ...normalized },
+      content: { ...normalized, title }, // ✅ Ensure title is in content too
     };
 
     // Prefer update-then-insert to avoid cross-user overwrite with service key
@@ -132,7 +153,7 @@ router.post("/save", requireUser, async (req, res) => {
         .update(row)
         .eq("user_id", userId)
         .eq("id", id)
-        .select("id,title,content,created_at,export_pdf_url,prompt")
+        .select("id,title,content,created_at,export_pdf_url,prompt,tool")
         .single();
 
       if (!updateError && updated)
@@ -142,7 +163,7 @@ router.post("/save", requireUser, async (req, res) => {
     const { data, error } = await db
       .from("decks")
       .insert(row)
-      .select("id,title,content,created_at,export_pdf_url,prompt")
+      .select("id,title,content,created_at,export_pdf_url,prompt,tool")
       .single();
 
     if (error) throw error;
@@ -179,7 +200,7 @@ router.post("/:id/share", requireUser, async (req, res) => {
       .update({ content: updatedContent })
       .eq("user_id", userId)
       .eq("id", deckId)
-      .select("id,title,content,created_at,export_pdf_url,prompt")
+      .select("id,title,content,created_at,export_pdf_url,prompt,tool")
       .single();
 
     if (error) throw error;
