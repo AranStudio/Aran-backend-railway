@@ -1,83 +1,194 @@
 // routes/generate.js
-import { chatCompletion } from "../utils/openaiClient.js";
+import { generateJson } from "../utils/openaiClient.js";
 
-function safeJsonParse(str) {
-  try {
-    return JSON.parse(str);
-  } catch {
-    return null;
-  }
-}
-
+/**
+ * POST /api/generate
+ * 
+ * Generates a story brief with title, tagline, beats, and optional tone image prompt.
+ * 
+ * Request body:
+ *   - prompt (required): The story concept/idea
+ *   - storyType (optional): Type of story (default: "general")
+ *   - contentType (optional): Content format hint
+ *   - styleHint (optional): Style guidance
+ *   - reimagine (optional): Whether to reimagine existing content
+ * 
+ * Response:
+ *   {
+ *     "title": "string",
+ *     "tagline": "string", 
+ *     "beats": [{ "order": 1, "title": "string", "text": "string" }, ...],
+ *     "toneImagePrompt": "string",
+ *     "story_type": "string"
+ *   }
+ */
 export default async function generate(req, res) {
+  const requestId = `gen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const startTime = Date.now();
+
   try {
-    const { prompt, contentType, styleHint, reimagine } = req.body || {};
-    if (!prompt || !String(prompt).trim()) {
-      return res.status(400).json({ error: "Missing prompt" });
+    // ---- Input validation ----
+    const body = req.body || {};
+    const prompt = body.prompt;
+    const storyType = body.storyType || body.contentType || "general";
+    const styleHint = body.styleHint || "";
+    const reimagine = Boolean(body.reimagine);
+
+    console.log(`[generate] START reqId=${requestId} storyType=${storyType} reimagine=${reimagine}`);
+
+    if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+      console.log(`[generate] VALIDATION_FAILED reqId=${requestId} reason=missing_prompt`);
+      return res.status(400).json({ 
+        error: "Missing or invalid 'prompt' field",
+        code: "MISSING_PROMPT"
+      });
     }
 
-    const system = `
-You are a precise JSON generator. Return ONLY valid JSON with this exact shape:
+    const trimmedPrompt = prompt.trim();
+
+    // ---- Build prompts for OpenAI ----
+    const systemPrompt = `You are Aran, a professional story engine for filmmakers and creatives.
+
+Your task is to generate a complete story brief from a user's concept.
+
+REQUIREMENTS:
+1. Generate a compelling title (short, memorable)
+2. Generate a tagline (1 sentence that captures the essence)
+3. Generate exactly 8 story beats - these are key narrative moments
+4. Each beat must have: order (1-8), title (short name), text (description)
+5. Generate a tone image prompt (a visual description for AI image generation that captures the story's mood)
+
+OUTPUT FORMAT - Return ONLY this exact JSON structure:
 {
-  "title": "short title",
-  "beats": ["beat 1", "beat 2", "beat 3", "beat 4", "beat 5", "beat 6"]
+  "title": "The Story Title",
+  "tagline": "A one-sentence hook that captures the story.",
+  "beats": [
+    { "order": 1, "title": "Opening", "text": "Description of the opening moment..." },
+    { "order": 2, "title": "Setup", "text": "Description of the setup..." },
+    { "order": 3, "title": "Catalyst", "text": "Description of the catalyst..." },
+    { "order": 4, "title": "Rising Action", "text": "Description of rising action..." },
+    { "order": 5, "title": "Midpoint", "text": "Description of the midpoint..." },
+    { "order": 6, "title": "Complications", "text": "Description of complications..." },
+    { "order": 7, "title": "Climax", "text": "Description of the climax..." },
+    { "order": 8, "title": "Resolution", "text": "Description of the resolution..." }
+  ],
+  "toneImagePrompt": "Cinematic description for image generation..."
 }
-No extra keys. No markdown. No commentary.
-Beats should be concise, visual, and ordered.
-`;
 
-    const user = `
-Story prompt: ${prompt}
-Content type: ${contentType || ""}
-Style hint: ${styleHint || ""}
-Reimagine: ${Boolean(reimagine)}
+Beats should be visual, concrete, and action-oriented. Think like a director.`;
 
-Generate a short title + 6 story beats.
-`;
+    const userPrompt = `Story concept: ${trimmedPrompt}
+Story type: ${storyType}
+${styleHint ? `Style hint: ${styleHint}` : ""}
+${reimagine ? "Note: This is a reimagining of existing content - add fresh creative twists." : ""}
 
-    const out = await chatCompletion({
-      system,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
+Generate the complete story brief now.`;
+
+    // ---- Call OpenAI via generateJson helper ----
+    const result = await generateJson({
+      system: systemPrompt,
+      user: userPrompt,
       model: "gpt-4o-mini",
-      responseFormat: { type: "json_object" },
-      temperature: 0.4,
-      maxTokens: 250,
+      temperature: 0.5,
+      maxTokens: 1500,
+      requestId,
     });
 
-    const parsed = safeJsonParse(out.text);
-    if (!parsed || typeof parsed !== "object") {
-      const err = new Error("Model returned invalid JSON for beats");
-      err.status = 502;
-      throw err;
+    // ---- Validate and normalize the response ----
+    const title = typeof result.title === "string" && result.title.trim() 
+      ? result.title.trim() 
+      : "Untitled Story";
+
+    const tagline = typeof result.tagline === "string" && result.tagline.trim()
+      ? result.tagline.trim()
+      : "";
+
+    const toneImagePrompt = typeof result.toneImagePrompt === "string" && result.toneImagePrompt.trim()
+      ? result.toneImagePrompt.trim()
+      : "";
+
+    // Normalize beats array
+    let beats = [];
+    if (Array.isArray(result.beats)) {
+      beats = result.beats
+        .map((beat, idx) => {
+          // Handle both object beats and string beats (for backwards compatibility)
+          if (typeof beat === "string") {
+            return {
+              order: idx + 1,
+              title: `Beat ${idx + 1}`,
+              text: beat.trim(),
+            };
+          }
+          if (typeof beat === "object" && beat !== null) {
+            return {
+              order: typeof beat.order === "number" ? beat.order : idx + 1,
+              title: typeof beat.title === "string" ? beat.title.trim() : `Beat ${idx + 1}`,
+              text: typeof beat.text === "string" ? beat.text.trim() : String(beat.text || beat.description || ""),
+            };
+          }
+          return null;
+        })
+        .filter((b) => b !== null && b.text);
     }
 
-    const title = (parsed?.title && String(parsed.title)) || "Untitled";
-
-    const beats = Array.isArray(parsed?.beats)
-      ? parsed.beats
-          .map((b) => String(b).trim())
-          .filter(Boolean)
-          .slice(0, 6)
-      : [];
-
-    if (beats.length < 3) {
-      const err = new Error("Model returned too few beats");
-      err.status = 502;
-      throw err;
+    // Validate minimum beats
+    if (beats.length < 6) {
+      console.error(`[generate] INSUFFICIENT_BEATS reqId=${requestId} beatCount=${beats.length}`);
+      return res.status(502).json({
+        error: "Model returned too few beats",
+        code: "INSUFFICIENT_BEATS",
+        beatCount: beats.length,
+      });
     }
 
-    return res.json({ 
-      title, 
+    const elapsed = Date.now() - startTime;
+    console.log(`[generate] SUCCESS reqId=${requestId} elapsed=${elapsed}ms beats=${beats.length} title="${title.slice(0, 50)}"`);
+
+    // ---- Return the complete brief ----
+    return res.json({
+      title,
+      tagline,
       beats,
-      story_type: contentType || "general", // REQUIRED - never undefined
+      toneImagePrompt,
+      story_type: storyType,
     });
+
   } catch (err) {
-    console.error("generate error:", err);
-    return res.status(err.status || 500).json({
-      error: err.message || "Error generating beats",
+    const elapsed = Date.now() - startTime;
+    
+    // Log error details
+    if (err.code === "JSON_PARSE_FAILED") {
+      console.error(`[generate] JSON_PARSE_FAILED reqId=${requestId} elapsed=${elapsed}ms snippet="${err.snippet?.slice(0, 500)}"`);
+      return res.status(502).json({
+        error: "Model returned invalid JSON",
+        code: "JSON_PARSE_FAILED",
+        debug: process.env.NODE_ENV !== "production" ? err.snippet?.slice(0, 200) : undefined,
+      });
+    }
+
+    if (err.code === "EMPTY_RESPONSE") {
+      console.error(`[generate] EMPTY_RESPONSE reqId=${requestId} elapsed=${elapsed}ms`);
+      return res.status(502).json({
+        error: "Model returned empty response",
+        code: "EMPTY_RESPONSE",
+      });
+    }
+
+    if (err.code === "OPENAI_API_ERROR") {
+      console.error(`[generate] OPENAI_API_ERROR reqId=${requestId} elapsed=${elapsed}ms error=${err.message}`);
+      return res.status(502).json({
+        error: "AI service error",
+        code: "AI_SERVICE_ERROR",
+        message: err.message,
+      });
+    }
+
+    // Unknown error
+    console.error(`[generate] UNKNOWN_ERROR reqId=${requestId} elapsed=${elapsed}ms error=`, err);
+    return res.status(500).json({
+      error: "Internal server error",
+      code: "INTERNAL_ERROR",
     });
   }
 }
