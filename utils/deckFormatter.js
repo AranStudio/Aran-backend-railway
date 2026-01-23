@@ -83,62 +83,133 @@ export function decodeDataUrlImage(dataUrl) {
   }
 }
 
+// =============================================================================
+// TOOL TYPE CONSTANTS AND VALIDATION
+// =============================================================================
+const VALID_TOOLS = ["story_engine", "shot_list", "canvas"];
+const DEFAULT_TOOL = "story_engine";
+
+/**
+ * Validate a tool value
+ * @param {string} tool - The tool value to validate
+ * @returns {string|null} - Valid tool value or null if invalid
+ */
+export function validateToolValue(tool) {
+  if (tool && typeof tool === "string") {
+    const normalized = tool.toLowerCase().trim();
+    if (VALID_TOOLS.includes(normalized)) {
+      return normalized;
+    }
+  }
+  return null;
+}
+
 /**
  * Determine the tool type based on deck content
+ * Uses multiple heuristics to correctly categorize decks
+ * 
  * @param {Object} src - Source deck data
  * @returns {string} - Tool type: "story_engine" | "shot_list" | "canvas"
  */
 function determineToolType(src) {
-  // If tool is explicitly set, use it
-  if (src.tool && typeof src.tool === "string") {
-    const tool = src.tool.toLowerCase();
-    if (["story_engine", "shot_list", "canvas"].includes(tool)) {
-      return tool;
-    }
+  // ==========================================================================
+  // PRIORITY 1: Explicit tool value (if valid)
+  // ==========================================================================
+  const explicitTool = validateToolValue(src.tool) || 
+                       validateToolValue(src?.content?.tool);
+  if (explicitTool) {
+    return explicitTool;
   }
 
-  // Check content.tool as well
-  if (src?.content?.tool && typeof src.content.tool === "string") {
-    const tool = src.content.tool.toLowerCase();
-    if (["story_engine", "shot_list", "canvas"].includes(tool)) {
-      return tool;
-    }
+  // ==========================================================================
+  // PRIORITY 2: Canvas/Whiteboard detection
+  // Canvas decks have unique markers that distinguish them clearly
+  // ==========================================================================
+  const hasCanvasData = !!(src.canvasData || src?.content?.canvasData);
+  const hasWhiteboardData = !!(src.whiteboard || src?.content?.whiteboard);
+  const hasCanvasElements = !!(src.canvasElements || src?.content?.canvasElements);
+  const hasDrawingData = !!(src.drawingData || src?.content?.drawingData);
+  
+  if (hasCanvasData || hasWhiteboardData || hasCanvasElements || hasDrawingData) {
+    return "canvas";
   }
 
-  // Infer from content
+  // ==========================================================================
+  // PRIORITY 3: Story Engine detection
+  // Story Engine decks have distinctive structure from the intelligence engine
+  // ==========================================================================
   const hasStoryProfile = !!(src.storyProfile || src?.content?.storyProfile);
   const hasCritique = !!(src.critique || src?.content?.critique);
   const hasAltConcepts = Array.isArray(src.altConcepts) || Array.isArray(src?.content?.altConcepts);
   
-  // Story engine has these unique fields
+  // Definitive Story Engine markers
   if (hasStoryProfile || hasCritique || hasAltConcepts) {
     return "story_engine";
   }
 
-  // Check for shots array (shot_list specific)
-  const hasShots = Array.isArray(src.shots) && src.shots.length > 0;
-  const hasScenes = Array.isArray(src.scenes) && src.scenes.length > 0;
-  
-  if (hasShots && !hasScenes) {
-    return "shot_list";
+  // Check for structured beats (Story Engine uses objects with name/intent/beatText)
+  const beats = src.beats || src?.content?.beats;
+  if (Array.isArray(beats) && beats.length > 0) {
+    const firstBeat = beats[0];
+    // Story Engine beats have structured objects with 'name' or 'intent' fields
+    const hasStructuredBeats = firstBeat && typeof firstBeat === "object" && 
+                               (firstBeat.name || firstBeat.intent || firstBeat.beatText);
+    if (hasStructuredBeats) {
+      return "story_engine";
+    }
   }
 
-  // Check for canvas-specific markers
-  const hasCanvasData = !!(src.canvasData || src?.content?.canvasData);
-  const hasWhiteboardData = !!(src.whiteboard || src?.content?.whiteboard);
-  
-  if (hasCanvasData || hasWhiteboardData) {
-    return "canvas";
-  }
-
-  // Default to story_engine for new decks with beats
-  const hasBeats = Array.isArray(src.beats) && src.beats.length > 0;
-  if (hasBeats) {
+  // Check for tone image (Story Engine feature)
+  const hasToneImage = !!(src.toneImage || src.tone_image || src?.content?.toneImage);
+  if (hasToneImage) {
     return "story_engine";
   }
 
-  // Fallback
-  return "story_engine";
+  // ==========================================================================
+  // PRIORITY 4: Shot List detection
+  // Shot lists have shots with timecodes (tcIn/tcOut) from video analysis
+  // ==========================================================================
+  const shots = src.shots || src?.content?.shots;
+  const hasShots = Array.isArray(shots) && shots.length > 0;
+  
+  if (hasShots) {
+    const firstShot = shots[0];
+    // Shot list shots have timecode fields (tcIn, tcOut)
+    const hasTimecodes = firstShot && typeof firstShot === "object" && 
+                         (firstShot.tcIn || firstShot.tcOut || firstShot.timecode);
+    // Shot list shots may have 'still' (keyframe image) field
+    const hasStillFrames = firstShot && typeof firstShot === "object" && firstShot.still;
+    
+    if (hasTimecodes || hasStillFrames) {
+      return "shot_list";
+    }
+    
+    // If there are shots but no beats, it's likely a shot list
+    const hasBeats = Array.isArray(beats) && beats.length > 0;
+    if (!hasBeats) {
+      return "shot_list";
+    }
+  }
+
+  // ==========================================================================
+  // PRIORITY 5: Default to story_engine
+  // Most decks with beats are Story Engine decks
+  // ==========================================================================
+  const hasAnyBeats = Array.isArray(beats) && beats.length > 0;
+  if (hasAnyBeats) {
+    return "story_engine";
+  }
+
+  // Check for prompt (indicates story generation attempt)
+  const hasPrompt = !!(src.prompt || src?.content?.prompt);
+  if (hasPrompt) {
+    return "story_engine";
+  }
+
+  // ==========================================================================
+  // FALLBACK: Default to story_engine
+  // ==========================================================================
+  return DEFAULT_TOOL;
 }
 
 export function normalizeDeckPayload(input = {}) {
