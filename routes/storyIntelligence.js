@@ -55,8 +55,14 @@ import { critiqueBeats } from "../services/storyIntelligence/critic.js";
  * }
  */
 export async function storyIntelligenceGenerate(req, res) {
+  const isDev = process.env.NODE_ENV !== "production";
+  
   try {
     const body = req.body || {};
+
+    if (isDev) {
+      console.log("[DEV] /story/intelligence/generate called with prompt:", body.prompt?.substring(0, 100));
+    }
 
     // Validate input
     const validation = validateInput(body);
@@ -95,9 +101,20 @@ export async function storyIntelligenceGenerate(req, res) {
     });
 
     if (!result.success) {
+      console.error("[ERROR] generateStoryIntelligence failed:", result.error);
       return res.status(502).json({
         success: false,
         error: result.error || "Story Intelligence Engine failed",
+        metadata: result.metadata,
+      });
+    }
+
+    // CRITICAL: Validate beats are present and non-empty
+    if (!result.beats || !Array.isArray(result.beats) || result.beats.length === 0) {
+      console.error("[ERROR] Story Intelligence Engine returned empty beats");
+      return res.status(500).json({
+        success: false,
+        error: "Story Intelligence Engine failed to generate beats - beats array is empty or undefined",
         metadata: result.metadata,
       });
     }
@@ -107,19 +124,14 @@ export async function storyIntelligenceGenerate(req, res) {
       success: true,
       title: result.title || "Untitled Story",
       storyProfile: result.storyProfile,
-      beats: result.beats || [],
+      beats: result.beats, // REQUIRED - must be non-empty array
       altConcepts: result.altConcepts || [],
       critique: result.critique,
       metadata: result.metadata,
     };
 
-    // Ensure beats are never empty (critical requirement)
-    if (!response.beats || response.beats.length === 0) {
-      return res.status(502).json({
-        success: false,
-        error: "Story Intelligence Engine failed to generate beats",
-        metadata: result.metadata,
-      });
+    if (isDev) {
+      console.log("[DEV] /story/intelligence/generate SUCCESS - returning", response.beats.length, "beats");
     }
 
     return res.json(response);
@@ -152,18 +164,36 @@ export async function storyIntelligenceGenerate(req, res) {
  * Apply a selected alternative concept and regenerate beats
  * POST /api/story/intelligence/apply-concept
  * 
+ * CRITICAL: This endpoint MUST regenerate beats using the selected concept.
+ * It must NOT just return refreshed altConcepts without new beats.
+ * 
  * Request body:
  * {
  *   prompt: string (required),
  *   storyType?: string,
- *   selectedConcept: { id, name, tagline, oneLiner, profilePatch? },
+ *   selectedConcept: { id, name, tagline, oneLiner, profilePatch? } (required),
  *   currentProfile?: Object,
  *   controls?: { risk?, creativityLevel? }
  * }
+ * 
+ * Response MUST include:
+ * - beats: Array of regenerated beats reflecting the selected concept
+ * - storyProfile: Updated profile with concept applied
  */
 export async function storyIntelligenceApplyConcept(req, res) {
+  const isDev = process.env.NODE_ENV !== "production";
+  
   try {
     const body = req.body || {};
+
+    if (isDev) {
+      console.log("[DEV] /story/intelligence/apply-concept called with:", {
+        prompt: body.prompt?.substring(0, 50),
+        selectedConceptId: body.selectedConcept?.id,
+        selectedConceptName: body.selectedConcept?.name,
+        selectedConceptOneLiner: body.selectedConcept?.oneLiner,
+      });
+    }
 
     if (!body.prompt || typeof body.prompt !== "string" || !body.prompt.trim()) {
       return res.status(400).json({
@@ -176,6 +206,14 @@ export async function storyIntelligenceApplyConcept(req, res) {
       return res.status(400).json({
         success: false,
         error: "Missing required field: selectedConcept",
+      });
+    }
+
+    // Validate selectedConcept has required fields
+    if (!body.selectedConcept.oneLiner && !body.selectedConcept.name) {
+      return res.status(400).json({
+        success: false,
+        error: "selectedConcept must have at least name or oneLiner field",
       });
     }
 
@@ -192,6 +230,7 @@ export async function storyIntelligenceApplyConcept(req, res) {
     });
 
     if (!result.success) {
+      console.error("[ERROR] applyConceptAndRegenerate failed:", result.error);
       return res.status(502).json({
         success: false,
         error: result.error || "Apply concept failed",
@@ -199,12 +238,29 @@ export async function storyIntelligenceApplyConcept(req, res) {
       });
     }
 
+    // CRITICAL: Validate beats are present and non-empty
+    // apply-concept MUST return regenerated beats, not just altConcepts
+    if (!result.beats || !Array.isArray(result.beats) || result.beats.length === 0) {
+      console.error("[ERROR] apply-concept returned empty beats - this is a critical failure");
+      return res.status(500).json({
+        success: false,
+        error: "Apply concept failed to regenerate beats - beats array is empty or undefined",
+        metadata: result.metadata,
+      });
+    }
+
+    if (isDev) {
+      console.log("[DEV] /story/intelligence/apply-concept SUCCESS");
+      console.log("[DEV] Beats regenerated:", result.beats.length);
+      console.log("[DEV] Beat names:", result.beats.map(b => b.name).join(", "));
+    }
+
     return res.json({
       success: true,
       title: result.title,
       storyProfile: result.storyProfile,
-      beats: result.beats,
-      altConcepts: result.altConcepts,
+      beats: result.beats, // REQUIRED - regenerated beats reflecting selected concept
+      altConcepts: result.altConcepts, // Optional - new alt concepts (but not primary output)
       critique: result.critique,
       metadata: result.metadata,
     });
