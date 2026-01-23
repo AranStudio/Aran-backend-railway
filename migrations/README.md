@@ -34,6 +34,12 @@ Creates helper views and functions:
 - `get_user_decks()` RPC function for paginated queries
 - `get_user_deck_counts()` RPC function for tab badges
 
+### 4. `004_beat_media_urls_and_storage.sql`
+Sets up storage and documents beat media URL schema:
+- Documents expected beat schema with `visual_url`, `storyboard_url`, `thumbnail_url` fields
+- Creates `deck-images` storage bucket for generated images
+- Sets up storage policies for authenticated uploads and public reads
+
 ## How to Run
 
 1. Open your Supabase project dashboard
@@ -80,6 +86,56 @@ Body: { "tool": "story_engine" }
 ```
 
 Move a deck to a different category.
+
+### Beat CRUD Endpoints
+
+These endpoints allow adding, updating, removing, and reordering beats after generation:
+
+#### Add a Beat
+```
+POST /api/decks/:id/beats
+Body: { "beat": { "text": "New beat description" }, "index": 2 }
+```
+Add a new beat at the specified index (optional, defaults to end).
+
+#### Update a Beat
+```
+PATCH /api/decks/:id/beats/:beatIndex
+Body: { "text": "Updated description", "visual_url": "https://..." }
+```
+Update specific fields of a beat.
+
+#### Delete a Beat
+```
+DELETE /api/decks/:id/beats/:beatIndex
+```
+Remove a beat at the specified index.
+
+#### Replace All Beats
+```
+PUT /api/decks/:id/beats
+Body: { "beats": [{ "text": "Beat 1" }, { "text": "Beat 2" }] }
+```
+Replace all beats with a new array.
+
+#### Reorder Beats
+```
+POST /api/decks/:id/beats/reorder
+Body: { "order": [2, 0, 1, 3] }
+```
+Reorder beats using an array of indices.
+
+### Beat Media URL Fields
+
+Each beat can have these media URL fields:
+
+| Field | Description |
+|-------|-------------|
+| `visual_url` | Generated visual/cinematic frame URL |
+| `storyboard_url` | Generated storyboard sketch URL |
+| `thumbnail_url` | Thumbnail URL (usually same as visual_url) |
+
+Both snake_case (`visual_url`) and camelCase (`visualUrl`) are returned for compatibility.
 
 ## Verification
 

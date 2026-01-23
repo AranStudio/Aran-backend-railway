@@ -1,7 +1,7 @@
 // routes/decks.js
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
-import { normalizeDeckPayload } from "../utils/deckFormatter.js";
+import { normalizeDeckPayload, normalizeBeatsForResponse } from "../utils/deckFormatter.js";
 import { buildShareUrl, shareEmailTemplate } from "../utils/shareLink.js";
 
 const router = express.Router();
@@ -116,6 +116,7 @@ function buildShareMetaForList(row) {
 
 /**
  * Build share metadata for a deck (for detail view - with full content)
+ * Also normalizes beat media URLs for consistent frontend access
  */
 function decorateShareMeta(row) {
   if (!row?.content) return row;
@@ -130,7 +131,38 @@ function decorateShareMeta(row) {
   // Ensure story_type is NEVER undefined - use fallback based on tool
   const storyType = row.story_type || normalized.contentType || (tool === "shot_list" ? "shot_list" : tool === "canvas" ? "canvas" : "general");
   
-  return { ...row, tool, story_type: storyType, shareUrl, mailto };
+  // Normalize beats with media URLs for consistent frontend access
+  const beatsWithMedia = normalizeBeatsForResponse(
+    normalized.beats,
+    normalized.visuals,
+    normalized.storyboards
+  );
+  
+  // Build deck thumbnail from first beat if not set at row level
+  const deckThumbnail = row.thumbnail_url || 
+                        normalized.thumbnail_url ||
+                        beatsWithMedia[0]?.visual_url || 
+                        beatsWithMedia[0]?.storyboard_url ||
+                        null;
+  
+  // Return with normalized content including beats with media URLs
+  return { 
+    ...row, 
+    tool, 
+    story_type: storyType, 
+    shareUrl, 
+    mailto,
+    // Deck-level thumbnail
+    thumbnail_url: deckThumbnail,
+    thumbnailUrl: deckThumbnail,
+    // Include normalized content with beats that have media URLs
+    content: {
+      ...normalized,
+      beats: beatsWithMedia,
+      thumbnail_url: deckThumbnail,
+      thumbnailUrl: deckThumbnail,
+    },
+  };
 }
 
 async function requireUser(req, res, next) {
@@ -606,6 +638,400 @@ router.patch("/:id/tool", requireUser, async (req, res) => {
   } catch (e) {
     console.error("update deck tool error:", e);
     return res.status(500).json({ error: e?.message || "Update failed" });
+  }
+});
+
+// =============================================================================
+// BEAT CRUD ENDPOINTS
+// These endpoints allow adding, updating, removing, and reordering beats
+// =============================================================================
+
+// =============================================================================
+// POST /decks/:id/beats - Add a new beat to a deck
+// =============================================================================
+router.post("/:id/beats", requireUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const deckId = req.params.id;
+    const { beat, index } = req.body || {};
+    const db = dbForReq(req);
+
+    if (!beat) {
+      return res.status(400).json({ error: "Missing required field: beat" });
+    }
+
+    // Fetch existing deck
+    const { data: existing, error: fetchError } = await db
+      .from("decks")
+      .select("content")
+      .eq("user_id", userId)
+      .eq("id", deckId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    const content = existing?.content || {};
+    const beats = Array.isArray(content.beats) ? [...content.beats] : [];
+
+    // Normalize the new beat
+    const newBeat = typeof beat === "string" 
+      ? { title: `Beat ${beats.length + 1}`, text: beat }
+      : {
+          title: beat.title || `Beat ${beats.length + 1}`,
+          text: beat.text || beat.beatText || "",
+          name: beat.name || null,
+          intent: beat.intent || null,
+          visual_url: beat.visual_url || beat.visualUrl || null,
+          storyboard_url: beat.storyboard_url || beat.storyboardUrl || null,
+          thumbnail_url: beat.thumbnail_url || beat.thumbnailUrl || null,
+        };
+
+    // Insert at specified index or append to end
+    const insertIndex = typeof index === "number" && index >= 0 && index <= beats.length 
+      ? index 
+      : beats.length;
+    
+    beats.splice(insertIndex, 0, newBeat);
+
+    // Update titles to maintain sequence
+    beats.forEach((b, i) => {
+      if (b.title?.match(/^Beat \d+$/)) {
+        b.title = `Beat ${i + 1}`;
+      }
+    });
+
+    const updatedContent = { ...content, beats };
+
+    const { data, error } = await db
+      .from("decks")
+      .update({ 
+        content: updatedContent,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", userId)
+      .eq("id", deckId)
+      .select(FULL_COLUMNS)
+      .single();
+
+    if (error) throw error;
+
+    return res.json({ 
+      ok: true, 
+      deck: decorateShareMeta(data),
+      addedBeat: newBeat,
+      beatIndex: insertIndex,
+      totalBeats: beats.length,
+    });
+  } catch (e) {
+    console.error("add beat error:", e);
+    return res.status(500).json({ error: e?.message || "Failed to add beat" });
+  }
+});
+
+// =============================================================================
+// PATCH /decks/:id/beats/:beatIndex - Update a specific beat
+// =============================================================================
+router.patch("/:id/beats/:beatIndex", requireUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const deckId = req.params.id;
+    const beatIndex = parseInt(req.params.beatIndex, 10);
+    const updates = req.body || {};
+    const db = dbForReq(req);
+
+    if (isNaN(beatIndex) || beatIndex < 0) {
+      return res.status(400).json({ error: "Invalid beat index" });
+    }
+
+    // Fetch existing deck
+    const { data: existing, error: fetchError } = await db
+      .from("decks")
+      .select("content")
+      .eq("user_id", userId)
+      .eq("id", deckId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    const content = existing?.content || {};
+    const beats = Array.isArray(content.beats) ? [...content.beats] : [];
+
+    if (beatIndex >= beats.length) {
+      return res.status(404).json({ error: "Beat not found at specified index" });
+    }
+
+    // Update the beat with provided fields
+    const currentBeat = beats[beatIndex] || {};
+    beats[beatIndex] = {
+      ...currentBeat,
+      ...(updates.title !== undefined && { title: updates.title }),
+      ...(updates.text !== undefined && { text: updates.text }),
+      ...(updates.beatText !== undefined && { beatText: updates.beatText, text: updates.beatText }),
+      ...(updates.name !== undefined && { name: updates.name }),
+      ...(updates.intent !== undefined && { intent: updates.intent }),
+      ...(updates.visual_url !== undefined && { visual_url: updates.visual_url, visualUrl: updates.visual_url }),
+      ...(updates.storyboard_url !== undefined && { storyboard_url: updates.storyboard_url, storyboardUrl: updates.storyboard_url }),
+      ...(updates.thumbnail_url !== undefined && { thumbnail_url: updates.thumbnail_url, thumbnailUrl: updates.thumbnail_url }),
+    };
+
+    const updatedContent = { ...content, beats };
+
+    const { data, error } = await db
+      .from("decks")
+      .update({ 
+        content: updatedContent,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", userId)
+      .eq("id", deckId)
+      .select(FULL_COLUMNS)
+      .single();
+
+    if (error) throw error;
+
+    return res.json({ 
+      ok: true, 
+      deck: decorateShareMeta(data),
+      updatedBeat: beats[beatIndex],
+      beatIndex,
+    });
+  } catch (e) {
+    console.error("update beat error:", e);
+    return res.status(500).json({ error: e?.message || "Failed to update beat" });
+  }
+});
+
+// =============================================================================
+// DELETE /decks/:id/beats/:beatIndex - Remove a specific beat
+// =============================================================================
+router.delete("/:id/beats/:beatIndex", requireUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const deckId = req.params.id;
+    const beatIndex = parseInt(req.params.beatIndex, 10);
+    const db = dbForReq(req);
+
+    if (isNaN(beatIndex) || beatIndex < 0) {
+      return res.status(400).json({ error: "Invalid beat index" });
+    }
+
+    // Fetch existing deck
+    const { data: existing, error: fetchError } = await db
+      .from("decks")
+      .select("content")
+      .eq("user_id", userId)
+      .eq("id", deckId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    const content = existing?.content || {};
+    const beats = Array.isArray(content.beats) ? [...content.beats] : [];
+
+    if (beatIndex >= beats.length) {
+      return res.status(404).json({ error: "Beat not found at specified index" });
+    }
+
+    // Remove the beat
+    const removedBeat = beats.splice(beatIndex, 1)[0];
+
+    // Update titles to maintain sequence
+    beats.forEach((b, i) => {
+      if (b.title?.match(/^Beat \d+$/)) {
+        b.title = `Beat ${i + 1}`;
+      }
+    });
+
+    const updatedContent = { ...content, beats };
+
+    const { data, error } = await db
+      .from("decks")
+      .update({ 
+        content: updatedContent,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", userId)
+      .eq("id", deckId)
+      .select(FULL_COLUMNS)
+      .single();
+
+    if (error) throw error;
+
+    return res.json({ 
+      ok: true, 
+      deck: decorateShareMeta(data),
+      removedBeat,
+      removedIndex: beatIndex,
+      totalBeats: beats.length,
+    });
+  } catch (e) {
+    console.error("delete beat error:", e);
+    return res.status(500).json({ error: e?.message || "Failed to delete beat" });
+  }
+});
+
+// =============================================================================
+// PUT /decks/:id/beats - Replace all beats (bulk update/reorder)
+// =============================================================================
+router.put("/:id/beats", requireUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const deckId = req.params.id;
+    const { beats } = req.body || {};
+    const db = dbForReq(req);
+
+    if (!Array.isArray(beats)) {
+      return res.status(400).json({ error: "beats must be an array" });
+    }
+
+    // Fetch existing deck
+    const { data: existing, error: fetchError } = await db
+      .from("decks")
+      .select("content")
+      .eq("user_id", userId)
+      .eq("id", deckId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    const content = existing?.content || {};
+
+    // Normalize all beats
+    const normalizedBeats = beats.map((beat, i) => {
+      if (typeof beat === "string") {
+        return { title: `Beat ${i + 1}`, text: beat };
+      }
+      return {
+        title: beat.title || `Beat ${i + 1}`,
+        text: beat.text || beat.beatText || "",
+        name: beat.name || null,
+        intent: beat.intent || null,
+        visual_url: beat.visual_url || beat.visualUrl || null,
+        storyboard_url: beat.storyboard_url || beat.storyboardUrl || null,
+        thumbnail_url: beat.thumbnail_url || beat.thumbnailUrl || null,
+        // Preserve camelCase aliases
+        visualUrl: beat.visual_url || beat.visualUrl || null,
+        storyboardUrl: beat.storyboard_url || beat.storyboardUrl || null,
+        thumbnailUrl: beat.thumbnail_url || beat.thumbnailUrl || null,
+      };
+    });
+
+    const updatedContent = { ...content, beats: normalizedBeats };
+
+    // Update deck thumbnail if it's null and first beat has media
+    const firstBeatThumbnail = normalizedBeats[0]?.visual_url || normalizedBeats[0]?.storyboard_url;
+    const updatePayload = {
+      content: updatedContent,
+      updated_at: new Date().toISOString(),
+    };
+    
+    if (firstBeatThumbnail && !existing?.thumbnail_url) {
+      updatePayload.thumbnail_url = firstBeatThumbnail;
+    }
+
+    const { data, error } = await db
+      .from("decks")
+      .update(updatePayload)
+      .eq("user_id", userId)
+      .eq("id", deckId)
+      .select(FULL_COLUMNS)
+      .single();
+
+    if (error) throw error;
+
+    return res.json({ 
+      ok: true, 
+      deck: decorateShareMeta(data),
+      totalBeats: normalizedBeats.length,
+    });
+  } catch (e) {
+    console.error("replace beats error:", e);
+    return res.status(500).json({ error: e?.message || "Failed to replace beats" });
+  }
+});
+
+// =============================================================================
+// POST /decks/:id/beats/reorder - Reorder beats by providing new order
+// =============================================================================
+router.post("/:id/beats/reorder", requireUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const deckId = req.params.id;
+    const { order } = req.body || {};
+    const db = dbForReq(req);
+
+    if (!Array.isArray(order)) {
+      return res.status(400).json({ error: "order must be an array of beat indices" });
+    }
+
+    // Fetch existing deck
+    const { data: existing, error: fetchError } = await db
+      .from("decks")
+      .select("content")
+      .eq("user_id", userId)
+      .eq("id", deckId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    const content = existing?.content || {};
+    const beats = Array.isArray(content.beats) ? content.beats : [];
+
+    // Validate order array
+    if (order.length !== beats.length) {
+      return res.status(400).json({ 
+        error: "order array length must match number of beats",
+        expected: beats.length,
+        received: order.length,
+      });
+    }
+
+    // Validate all indices are valid
+    const validIndices = order.every(i => typeof i === "number" && i >= 0 && i < beats.length);
+    if (!validIndices) {
+      return res.status(400).json({ error: "Invalid index in order array" });
+    }
+
+    // Check for duplicates
+    const uniqueIndices = new Set(order);
+    if (uniqueIndices.size !== order.length) {
+      return res.status(400).json({ error: "Duplicate indices in order array" });
+    }
+
+    // Reorder beats
+    const reorderedBeats = order.map(i => beats[i]);
+
+    // Update titles to maintain sequence
+    reorderedBeats.forEach((b, i) => {
+      if (b.title?.match(/^Beat \d+$/)) {
+        b.title = `Beat ${i + 1}`;
+      }
+    });
+
+    const updatedContent = { ...content, beats: reorderedBeats };
+
+    const { data, error } = await db
+      .from("decks")
+      .update({ 
+        content: updatedContent,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", userId)
+      .eq("id", deckId)
+      .select(FULL_COLUMNS)
+      .single();
+
+    if (error) throw error;
+
+    return res.json({ 
+      ok: true, 
+      deck: decorateShareMeta(data),
+      newOrder: order,
+      totalBeats: reorderedBeats.length,
+    });
+  } catch (e) {
+    console.error("reorder beats error:", e);
+    return res.status(500).json({ error: e?.message || "Failed to reorder beats" });
   }
 });
 

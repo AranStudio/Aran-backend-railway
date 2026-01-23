@@ -22,6 +22,68 @@ function normalizeLabeledEntry(entry, fallbackLabel) {
   };
 }
 
+/**
+ * Normalize a beat entry with media URL fields
+ * Ensures consistent field names for visual_url, storyboard_url, thumbnail_url
+ * 
+ * @param {Object|string} entry - Beat entry (can be string or object)
+ * @param {string} fallbackLabel - Fallback label for the beat
+ * @param {number} index - Beat index (for looking up visuals/storyboards from arrays)
+ * @param {Array} visuals - Optional visuals array to pull image from
+ * @param {Array} storyboards - Optional storyboards array to pull image from
+ * @returns {Object} Normalized beat with media URLs
+ */
+function normalizeBeatEntry(entry, fallbackLabel, index = 0, visuals = [], storyboards = []) {
+  // Start with basic labeled entry normalization
+  const basic = normalizeLabeledEntry(entry, fallbackLabel);
+  
+  if (typeof entry === "string") {
+    // For string entries, try to get media from visuals/storyboards arrays
+    const visualFromArray = visuals[index];
+    const storyboardFromArray = storyboards[index];
+    
+    return {
+      ...basic,
+      // Canonical snake_case fields
+      visual_url: visualFromArray?.image || visualFromArray?.url || visualFromArray?.dataUrl || null,
+      storyboard_url: storyboardFromArray?.image || storyboardFromArray?.url || storyboardFromArray?.dataUrl || null,
+      thumbnail_url: visualFromArray?.image || visualFromArray?.url || storyboardFromArray?.image || null,
+      // camelCase aliases for backward compatibility
+      visualUrl: visualFromArray?.image || visualFromArray?.url || visualFromArray?.dataUrl || null,
+      storyboardUrl: storyboardFromArray?.image || storyboardFromArray?.url || storyboardFromArray?.dataUrl || null,
+      thumbnailUrl: visualFromArray?.image || visualFromArray?.url || storyboardFromArray?.image || null,
+    };
+  }
+  
+  // For object entries, extract media URLs with fallbacks
+  // Priority: explicit field > snake_case > camelCase > array lookup
+  const visual_url = entry.visual_url || entry.visualUrl || entry.image || entry.dataUrl ||
+                     visuals[index]?.image || visuals[index]?.url || visuals[index]?.dataUrl || null;
+  
+  const storyboard_url = entry.storyboard_url || entry.storyboardUrl || entry.storyboardImage ||
+                         storyboards[index]?.image || storyboards[index]?.url || storyboards[index]?.dataUrl || null;
+  
+  // Thumbnail priority: explicit > visual > storyboard
+  const thumbnail_url = entry.thumbnail_url || entry.thumbnailUrl || 
+                        visual_url || storyboard_url || null;
+  
+  return {
+    ...basic,
+    // Preserve original beat-specific fields
+    name: entry.name || null,
+    intent: entry.intent || null,
+    beatText: entry.beatText || entry.text || basic.text || "",
+    // Canonical snake_case fields
+    visual_url,
+    storyboard_url,
+    thumbnail_url,
+    // camelCase aliases for backward compatibility
+    visualUrl: visual_url,
+    storyboardUrl: storyboard_url,
+    thumbnailUrl: thumbnail_url,
+  };
+}
+
 function normalizeVisualEntry(entry, index, prefix = "Visual") {
   if (!entry) return { title: `${prefix} ${index + 1}`, image: null, caption: "" };
   if (typeof entry === "string") {
@@ -239,6 +301,20 @@ export function normalizeDeckPayload(input = {}) {
   const storyType = coerceString(src.story_type || src?.content?.story_type || contentType || "").trim() || 
                     (tool === "shot_list" ? "shot_list" : tool === "canvas" ? "canvas" : "general");
 
+  // Normalize beats with media URLs - use the new normalizeBeatEntry function
+  // This ensures beats have visual_url, storyboard_url, thumbnail_url fields
+  const normalizedBeats = beats.map((b, i) => 
+    normalizeBeatEntry(b, beatTitles[i] || `Beat ${i + 1}`, i, visuals, storyboards)
+  );
+
+  // Determine deck thumbnail_url from first beat or explicit source
+  const thumbnail_url = src.thumbnail_url || src.thumbnailUrl ||
+                        normalizedBeats[0]?.visual_url || 
+                        normalizedBeats[0]?.storyboard_url ||
+                        visuals[0]?.image || visuals[0]?.url ||
+                        storyboards[0]?.image || storyboards[0]?.url ||
+                        null;
+
   const normalized = {
     id: src.id,
     title: coerceString(src.title || src?.content?.title || "").trim() || null,
@@ -248,8 +324,12 @@ export function normalizeDeckPayload(input = {}) {
     story_type: storyType, // REQUIRED - never undefined, for frontend rendering
     tool, // ✅ Include tool field for categorization
     toneImage: src.toneImage || src.tone_image || src?.content?.toneImage || null,
+    // Deck-level thumbnail (snake_case canonical, camelCase for compatibility)
+    thumbnail_url,
+    thumbnailUrl: thumbnail_url,
     beatTitles,
-    beats: beats.map((b, i) => normalizeLabeledEntry(b, beatTitles[i] || `Beat ${i + 1}`)),
+    // Use normalized beats with media URLs
+    beats: normalizedBeats,
     scenes: scenes.map((s, i) => normalizeLabeledEntry(s, `Scene ${i + 1}`)),
     shots: shots.map((s, i) => normalizeLabeledEntry(s, `Shot ${i + 1}`)),
     visuals: visuals.map((v, i) => normalizeVisualEntry(v, i, "Visual")),
@@ -264,6 +344,50 @@ export function normalizeDeckPayload(input = {}) {
   };
 
   return normalized;
+}
+
+/**
+ * Normalize beats array for API response
+ * Ensures each beat has consistent visual_url, storyboard_url, thumbnail_url fields
+ * 
+ * @param {Array} beats - Beats array from database
+ * @param {Array} visuals - Optional visuals array
+ * @param {Array} storyboards - Optional storyboards array
+ * @returns {Array} Normalized beats array
+ */
+export function normalizeBeatsForResponse(beats, visuals = [], storyboards = []) {
+  if (!Array.isArray(beats)) return [];
+  
+  return beats.map((beat, index) => {
+    // If beat is a string, convert to object
+    if (typeof beat === "string") {
+      return normalizeBeatEntry(beat, `Beat ${index + 1}`, index, visuals, storyboards);
+    }
+    
+    // Extract media URLs with fallbacks
+    const visual_url = beat.visual_url || beat.visualUrl || beat.image || beat.dataUrl ||
+                       visuals[index]?.image || visuals[index]?.url || visuals[index]?.dataUrl || null;
+    
+    const storyboard_url = beat.storyboard_url || beat.storyboardUrl || beat.storyboardImage ||
+                           storyboards[index]?.image || storyboards[index]?.url || storyboards[index]?.dataUrl || null;
+    
+    const thumbnail_url = beat.thumbnail_url || beat.thumbnailUrl || 
+                          visual_url || storyboard_url || null;
+    
+    return {
+      ...beat,
+      // Ensure text field exists
+      text: beat.text ?? beat.beatText ?? "",
+      // Canonical snake_case fields
+      visual_url,
+      storyboard_url,
+      thumbnail_url,
+      // camelCase aliases for backward compatibility
+      visualUrl: visual_url,
+      storyboardUrl: storyboard_url,
+      thumbnailUrl: thumbnail_url,
+    };
+  });
 }
 
 export function buildExportPayload(deck, includeSections) {

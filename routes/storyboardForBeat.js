@@ -5,9 +5,34 @@
  * 
  * This endpoint generates a storyboard image for a specific beat
  * without regenerating the entire deck.
+ * 
+ * UPDATED: Now persists generated images to Supabase Storage and updates
+ * the beat's storyboard_url in the database.
  */
 
+import { createClient } from "@supabase/supabase-js";
 import { openai, asDataUrlFromB64 } from "../utils/openaiClient.js";
+import {
+  uploadBeatStoryboard,
+  updateBeatMediaUrls,
+  updateDeckThumbnail,
+} from "../utils/supabaseStorage.js";
+
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+
+/**
+ * Get Supabase client for database operations
+ */
+function getSupabaseClient() {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return null;
+  }
+  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
+}
 
 /**
  * Generate storyboard image for a single beat
@@ -16,22 +41,37 @@ import { openai, asDataUrlFromB64 } from "../utils/openaiClient.js";
  * {
  *   storyId?: string,
  *   deckId?: string,
- *   beatId: number|string (required),
+ *   beatId: number|string (required) - Can be beat ID or beat index
+ *   beatIndex?: number - Explicit beat index (0-based)
  *   beatText: string (required),
  *   style?: string,
- *   aspectRatio?: string ("1:1" | "16:9" | "3:2")
+ *   aspectRatio?: string ("1:1" | "16:9" | "3:2"),
+ *   persist?: boolean (default: true) - Whether to persist to storage/DB
  * }
  * 
  * Response:
  * {
  *   success: boolean,
  *   beatId: number|string,
- *   storyboardImageUrl: string (data URL)
+ *   beatIndex: number,
+ *   storyboard_url: string (public URL if persisted, data URL otherwise),
+ *   storyboardImageUrl: string (alias for backward compatibility),
+ *   thumbnail_url: string (same as storyboard_url),
+ *   persisted: boolean
  * }
  */
 export async function generateStoryboardForBeat(req, res) {
   try {
-    const { storyId, deckId, beatId, beatText, style, aspectRatio } = req.body || {};
+    const { 
+      storyId, 
+      deckId, 
+      beatId, 
+      beatIndex: explicitBeatIndex,
+      beatText, 
+      style, 
+      aspectRatio,
+      persist = true,
+    } = req.body || {};
 
     // Validate required fields
     if (beatId === undefined || beatId === null) {
@@ -47,6 +87,12 @@ export async function generateStoryboardForBeat(req, res) {
         error: "Missing required field: beatText",
       });
     }
+
+    // Determine beat index (0-based) for storage path and DB update
+    // Priority: explicit beatIndex > beatId if numeric
+    const beatIndex = explicitBeatIndex !== undefined 
+      ? Number(explicitBeatIndex) 
+      : (typeof beatId === "number" ? beatId : parseInt(beatId, 10) || 0);
 
     // Determine image size based on aspect ratio
     let size = "1024x1024"; // Default square
@@ -66,7 +112,7 @@ Professional storyboard quality.
 Beat description: ${beatText.trim()}
 `.trim();
 
-    console.log(`Generating storyboard for beat ${beatId}:`, imgPrompt.substring(0, 100));
+    console.log(`Generating storyboard for beat ${beatId} (index: ${beatIndex}):`, imgPrompt.substring(0, 100));
 
     const response = await openai.images.generate({
       model: "gpt-image-1",
@@ -78,21 +124,71 @@ Beat description: ${beatText.trim()}
     const url = response?.data?.[0]?.url;
     const dataUrl = asDataUrlFromB64(b64);
 
-    const storyboardImageUrl = dataUrl || url || null;
+    const generatedImageUrl = dataUrl || url || null;
 
-    if (!storyboardImageUrl) {
+    if (!generatedImageUrl) {
       return res.status(502).json({
         success: false,
         error: "Failed to generate storyboard image",
       });
     }
 
+    // =========================================================================
+    // PERSIST TO STORAGE AND DATABASE (if deckId provided and persist=true)
+    // =========================================================================
+    let storyboard_url = generatedImageUrl;
+    let persisted = false;
+
+    if (persist && deckId && generatedImageUrl) {
+      try {
+        // Upload to Supabase Storage
+        const publicUrl = await uploadBeatStoryboard(generatedImageUrl, deckId, beatIndex);
+        
+        if (publicUrl) {
+          storyboard_url = publicUrl;
+          
+          // Get Supabase client for DB updates
+          const supabase = getSupabaseClient();
+          
+          if (supabase) {
+            // Update beat in deck content with the new URL
+            const updated = await updateBeatMediaUrls(supabase, deckId, beatIndex, {
+              storyboard_url: publicUrl,
+              thumbnail_url: publicUrl, // Use storyboard as thumbnail if no visual
+            });
+            
+            if (updated) {
+              persisted = true;
+              
+              // Also update deck thumbnail if this is the first beat or deck has no thumbnail
+              if (beatIndex === 0) {
+                await updateDeckThumbnail(supabase, deckId, publicUrl, true);
+              }
+            }
+          }
+        }
+      } catch (persistError) {
+        // Log but don't fail the request - still return the generated image
+        console.error("Failed to persist storyboard to storage:", persistError.message);
+      }
+    }
+
+    // Return response with consistent field names
     return res.json({
       success: true,
       beatId,
+      beatIndex,
       storyId: storyId || null,
       deckId: deckId || null,
-      storyboardImageUrl,
+      // Canonical fields (snake_case)
+      storyboard_url,
+      thumbnail_url: storyboard_url,
+      // Backward compatibility (camelCase)
+      storyboardImageUrl: storyboard_url,
+      storyboardUrl: storyboard_url,
+      thumbnailUrl: storyboard_url,
+      // Metadata
+      persisted,
     });
   } catch (error) {
     console.error("generateStoryboardForBeat error:", error);
