@@ -2,6 +2,47 @@
 import { generateJson } from "../utils/openaiClient.js";
 
 /**
+ * Normalizes the generation response to ensure consistent field naming
+ * for frontend compatibility. Critical: maps beatText → text
+ */
+function normalizeGenerateResponse(payload) {
+  const beatsIn = Array.isArray(payload?.beats) ? payload.beats : [];
+
+  const beats = beatsIn.map((b, i) => ({
+    id: b.id ?? i + 1,
+    name: b.name ?? `Beat ${i + 1}`,
+    intent: b.intent ?? "",
+    // ✅ critical mapping for frontend compatibility
+    text: b.text ?? b.beatText ?? "",
+    cameraNotes: b.cameraNotes ?? "",
+    audioNotes: b.audioNotes ?? "",
+    onScreenText: b.onScreenText ?? null,
+    brandIntegration: b.brandIntegration ?? "",
+  }));
+
+  const altConceptsIn = Array.isArray(payload?.altConcepts) ? payload.altConcepts : [];
+  const altConcepts = altConceptsIn.map((c) => ({
+    id: c.id,
+    // normalize name → title
+    title: c.title ?? c.name ?? "",
+    tagline: c.tagline ?? "",
+    oneLiner: c.oneLiner ?? c.description ?? "",
+    profilePatch: c.profilePatch ?? {},
+  }));
+
+  return {
+    success: true,
+    title: payload?.title ?? "",
+    story_type: payload?.story_type ?? payload?.storyType ?? "general",
+    storyProfile: payload?.storyProfile ?? null,
+    beats,
+    altConcepts,
+    critique: payload?.critique ?? null,
+    metadata: payload?.metadata ?? null,
+  };
+}
+
+/**
  * POST /api/generate
  * 
  * Generates a story brief with title, tagline, beats, and optional tone image prompt.
@@ -94,11 +135,10 @@ Generate the complete story brief now.`;
       requestId,
     });
 
-    // ---- Validate and normalize the response ----
-    const title = typeof result.title === "string" && result.title.trim() 
-      ? result.title.trim() 
-      : "Untitled Story";
+    // ---- Normalize the response using helper for frontend compatibility ----
+    const out = normalizeGenerateResponse(result);
 
+    // Also extract additional fields from result that aren't in the normalizer
     const tagline = typeof result.tagline === "string" && result.tagline.trim()
       ? result.tagline.trim()
       : "";
@@ -107,51 +147,28 @@ Generate the complete story brief now.`;
       ? result.toneImagePrompt.trim()
       : "";
 
-    // Normalize beats array
-    let beats = [];
-    if (Array.isArray(result.beats)) {
-      beats = result.beats
-        .map((beat, idx) => {
-          // Handle both object beats and string beats (for backwards compatibility)
-          if (typeof beat === "string") {
-            return {
-              order: idx + 1,
-              title: `Beat ${idx + 1}`,
-              text: beat.trim(),
-            };
-          }
-          if (typeof beat === "object" && beat !== null) {
-            return {
-              order: typeof beat.order === "number" ? beat.order : idx + 1,
-              title: typeof beat.title === "string" ? beat.title.trim() : `Beat ${idx + 1}`,
-              text: typeof beat.text === "string" ? beat.text.trim() : String(beat.text || beat.description || ""),
-            };
-          }
-          return null;
-        })
-        .filter((b) => b !== null && b.text);
-    }
-
-    // Validate minimum beats
-    if (beats.length < 6) {
-      console.error(`[generate] INSUFFICIENT_BEATS reqId=${requestId} beatCount=${beats.length}`);
+    // Do NOT return 200 for invalid generations
+    if (!out.title || !Array.isArray(out.beats) || out.beats.length === 0 || !out.beats[0].text) {
+      console.error("INVALID_GENERATION_OUTPUT", {
+        title: out.title,
+        beatsLen: out.beats?.length,
+        firstBeat: out.beats?.[0],
+        rawKeys: Object.keys(result || {}),
+      });
       return res.status(502).json({
-        error: "Model returned too few beats",
-        code: "INSUFFICIENT_BEATS",
-        beatCount: beats.length,
+        success: false,
+        error: "Generation returned invalid structure (missing title/beats/text)",
       });
     }
 
     const elapsed = Date.now() - startTime;
-    console.log(`[generate] SUCCESS reqId=${requestId} elapsed=${elapsed}ms beats=${beats.length} title="${title.slice(0, 50)}"`);
+    console.log(`[generate] SUCCESS reqId=${requestId} elapsed=${elapsed}ms beats=${out.beats.length} title="${out.title.slice(0, 50)}"`);
 
-    // ---- Return the complete brief ----
-    return res.json({
-      title,
+    // ---- Return the complete normalized brief ----
+    return res.status(200).json({
+      ...out,
       tagline,
-      beats,
       toneImagePrompt,
-      story_type: storyType,
     });
 
   } catch (err) {
