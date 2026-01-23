@@ -10,6 +10,20 @@ const formats = [
   },
 ];
 
+// PDF templates available for export
+const pdfTemplates = [
+  { 
+    id: "default", 
+    label: "Standard", 
+    description: "Classic multi-page layout with sections." 
+  },
+  { 
+    id: "pitch_deck_editorial", 
+    label: "Pitch Deck (Editorial)", 
+    description: "Cinematic editorial layout with full-bleed hero and gallery-style beats. Premium film pitch deck aesthetic." 
+  },
+];
+
 const detailSections = [
   { id: "prompt", label: "Prompt" },
   { id: "brief", label: "Brief" },
@@ -23,5 +37,5 @@ const detailSections = [
 ];
 
 export default async function exportOptions(_req, res) {
-  return res.json({ ok: true, formats, detailSections });
+  return res.json({ ok: true, formats, pdfTemplates, detailSections });
 }

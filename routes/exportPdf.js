@@ -2,12 +2,14 @@
 // Generates a PDF for a deck and (optionally) saves it to the user's account.
 //
 // NEW: "Page 1 Everything" layout with optional expansion pages.
+// NEW: "pitch_deck_editorial" template for cinematic pitch deck aesthetic.
 // Backwards compatible with the older include[] multi-page export.
 
 import PDFDocument from "pdfkit";
 import { PassThrough } from "stream";
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "crypto";
+import fetch from "node-fetch";
 
 import { decodeDataUrlImage, normalizeDeckPayload, safeFilename } from "../utils/deckFormatter.js";
 
@@ -69,6 +71,452 @@ function normalizeFrames(frames) {
   }, -1);
   if (max < 0) return [];
   return Array.from({ length: max + 1 }, (_, i) => frames[i] || null);
+}
+
+// ============================================================================
+// PITCH DECK EDITORIAL TEMPLATE
+// A cinematic, premium PDF layout with full-bleed hero and editorial pages
+// ============================================================================
+
+const FOOTER_TEXT = "© 2026 Aran Studio. All rights reserved.";
+
+// Typography configuration for editorial design
+const TYPOGRAPHY = {
+  // Josefin Sans-like styling (PDFKit uses Helvetica by default)
+  titleSize: 42,
+  subtitleSize: 14,
+  sectionLabelSize: 10,
+  bodySize: 11,
+  beatTitleSize: 12,
+  beatTextSize: 10,
+  footerSize: 8,
+  letterSpacing: 2,
+  lineHeight: 1.5,
+};
+
+// Layout configuration
+const LAYOUT = {
+  heroMargin: 0, // Full-bleed
+  editorialMargin: 72, // 1 inch margins
+  editorialMarginLarge: 96, // Larger margins for breathing room
+  columnGap: 36,
+  beatSpacing: 48,
+  footerHeight: 40,
+};
+
+/**
+ * Fetch image buffer from URL
+ */
+async function fetchImageBuffer(url) {
+  if (!url || typeof url !== "string") return null;
+  
+  // Handle data URLs directly
+  if (url.startsWith("data:")) {
+    return imgBufFromAny(url);
+  }
+  
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  } catch (e) {
+    console.error("Failed to fetch image:", e);
+    return null;
+  }
+}
+
+/**
+ * Get image buffer from various sources (data URL, URL, or buffer)
+ */
+async function getImageBuffer(img) {
+  if (!img) return null;
+  
+  // Already a buffer
+  if (Buffer.isBuffer(img)) return img;
+  
+  // Data URL
+  const decoded = decodeDataUrlImage(img);
+  if (decoded?.buffer) return decoded.buffer;
+  
+  // URL - fetch it
+  if (typeof img === "string" && (img.startsWith("http://") || img.startsWith("https://"))) {
+    return await fetchImageBuffer(img);
+  }
+  
+  return null;
+}
+
+/**
+ * Render the pitch deck editorial PDF template
+ */
+async function renderPitchDeckEditorialPdf(deck) {
+  const title = deck.title || "Untitled";
+  const description = deck.prompt || deck.brief || "";
+  const toneImage = deck.toneImage || null;
+  const beats = Array.isArray(deck.beats) ? deck.beats : [];
+  const visuals = normalizeFrames(deck.visuals);
+  const storyboards = normalizeFrames(deck.storyboards);
+
+  // Create document with no initial page (we'll add pages manually)
+  const doc = new PDFDocument({ 
+    autoFirstPage: false,
+    margin: 0,
+    size: "letter", // 612 x 792 points
+    bufferPages: true,
+  });
+
+  const pass = new PassThrough();
+  const chunks = [];
+  pass.on("data", (c) => chunks.push(c));
+  const done = new Promise((resolve, reject) => {
+    pass.on("end", () => resolve(Buffer.concat(chunks)));
+    pass.on("error", reject);
+  });
+  doc.pipe(pass);
+
+  const PAGE_WIDTH = 612;
+  const PAGE_HEIGHT = 792;
+
+  // Helper to add footer to current page
+  function addFooter() {
+    doc.save();
+    doc.fontSize(TYPOGRAPHY.footerSize);
+    doc.fillColor("#666666");
+    const footerY = PAGE_HEIGHT - 30;
+    doc.text(FOOTER_TEXT, 0, footerY, { 
+      width: PAGE_WIDTH, 
+      align: "center" 
+    });
+    doc.restore();
+  }
+
+  // -------------------- PAGE 1: HERO PAGE --------------------
+  async function renderHeroPage() {
+    doc.addPage({ margin: 0 });
+    
+    // Get tone image buffer
+    const imgBuf = await getImageBuffer(toneImage);
+    
+    if (imgBuf) {
+      try {
+        // Full-bleed background image
+        doc.image(imgBuf, 0, 0, { 
+          width: PAGE_WIDTH, 
+          height: PAGE_HEIGHT,
+          cover: [PAGE_WIDTH, PAGE_HEIGHT],
+        });
+      } catch (e) {
+        // Fallback to dark background if image fails
+        doc.rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT).fill("#1a1a1a");
+      }
+    } else {
+      // Dark cinematic background if no tone image
+      doc.rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT).fill("#1a1a1a");
+    }
+
+    // Subtle gradient overlay for text readability (bottom to top)
+    const gradientHeight = PAGE_HEIGHT * 0.6;
+    const gradientSteps = 20;
+    for (let i = 0; i < gradientSteps; i++) {
+      const opacity = (i / gradientSteps) * 0.7;
+      const y = PAGE_HEIGHT - gradientHeight + (i * (gradientHeight / gradientSteps));
+      const h = gradientHeight / gradientSteps + 1;
+      doc.save();
+      doc.fillColor("#000000");
+      doc.fillOpacity(opacity);
+      doc.rect(0, y, PAGE_WIDTH, h).fill();
+      doc.restore();
+    }
+
+    // Title - large, uppercase, centered near bottom
+    const titleY = PAGE_HEIGHT - 200;
+    doc.save();
+    doc.fillColor("#ffffff");
+    doc.fontSize(TYPOGRAPHY.titleSize);
+    doc.text(title.toUpperCase(), LAYOUT.editorialMargin, titleY, {
+      width: PAGE_WIDTH - (LAYOUT.editorialMargin * 2),
+      align: "center",
+      characterSpacing: TYPOGRAPHY.letterSpacing,
+    });
+    doc.restore();
+
+    // Description - smaller, below title
+    if (description) {
+      const descY = titleY + 60;
+      doc.save();
+      doc.fillColor("#cccccc");
+      doc.fontSize(TYPOGRAPHY.subtitleSize);
+      const shortDesc = description.length > 150 
+        ? description.slice(0, 147) + "..." 
+        : description;
+      doc.text(shortDesc, LAYOUT.editorialMargin, descY, {
+        width: PAGE_WIDTH - (LAYOUT.editorialMargin * 2),
+        align: "center",
+        lineGap: 4,
+      });
+      doc.restore();
+    }
+
+    addFooter();
+  }
+
+  // -------------------- PAGE 2: INTRODUCTION PAGE --------------------
+  function renderIntroPage() {
+    doc.addPage({ margin: LAYOUT.editorialMarginLarge });
+    
+    // White background (default)
+    doc.rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT).fill("#ffffff");
+    
+    const margin = LAYOUT.editorialMarginLarge;
+    const contentWidth = PAGE_WIDTH - (margin * 2);
+    let cursorY = margin;
+
+    // Section label
+    doc.save();
+    doc.fillColor("#888888");
+    doc.fontSize(TYPOGRAPHY.sectionLabelSize);
+    doc.text("INTRODUCTION", margin, cursorY, {
+      characterSpacing: TYPOGRAPHY.letterSpacing,
+    });
+    doc.restore();
+    cursorY += 30;
+
+    // Horizontal rule
+    doc.save();
+    doc.strokeColor("#e0e0e0");
+    doc.lineWidth(0.5);
+    doc.moveTo(margin, cursorY).lineTo(margin + contentWidth, cursorY).stroke();
+    doc.restore();
+    cursorY += 40;
+
+    // Two-column layout
+    const colGap = LAYOUT.columnGap;
+    const leftColWidth = contentWidth * 0.55 - colGap / 2;
+    const rightColWidth = contentWidth * 0.45 - colGap / 2;
+    const rightColX = margin + leftColWidth + colGap;
+
+    // Left column: Story description/prompt
+    doc.save();
+    doc.fillColor("#333333");
+    doc.fontSize(TYPOGRAPHY.bodySize);
+    
+    const promptLabel = "STORY CONCEPT";
+    doc.fontSize(TYPOGRAPHY.sectionLabelSize);
+    doc.fillColor("#888888");
+    doc.text(promptLabel, margin, cursorY, { characterSpacing: 1 });
+    
+    doc.moveDown(1.5);
+    doc.fontSize(TYPOGRAPHY.bodySize);
+    doc.fillColor("#333333");
+    
+    const storyText = description || "No description provided.";
+    doc.text(storyText, margin, doc.y, {
+      width: leftColWidth,
+      lineGap: 6,
+      align: "left",
+    });
+    doc.restore();
+
+    // Right column: Metadata
+    doc.save();
+    doc.fontSize(TYPOGRAPHY.sectionLabelSize);
+    doc.fillColor("#888888");
+    doc.text("DETAILS", rightColX, cursorY, { characterSpacing: 1 });
+    
+    let rightY = cursorY + 30;
+    doc.fontSize(TYPOGRAPHY.bodySize);
+    doc.fillColor("#333333");
+
+    // Title
+    doc.text("Title", rightColX, rightY, { continued: false });
+    rightY += 16;
+    doc.fillColor("#666666");
+    doc.text(title, rightColX, rightY);
+    rightY += 30;
+
+    // Beats count
+    doc.fillColor("#333333");
+    doc.text("Story Beats", rightColX, rightY);
+    rightY += 16;
+    doc.fillColor("#666666");
+    doc.text(`${beats.length} beats`, rightColX, rightY);
+    rightY += 30;
+
+    // Visuals count
+    const totalVisuals = visuals.length + storyboards.length;
+    if (totalVisuals > 0) {
+      doc.fillColor("#333333");
+      doc.text("Visual Assets", rightColX, rightY);
+      rightY += 16;
+      doc.fillColor("#666666");
+      doc.text(`${totalVisuals} images`, rightColX, rightY);
+    }
+
+    doc.restore();
+
+    addFooter();
+  }
+
+  // -------------------- PAGE 3+: BEATS GALLERY PAGES --------------------
+  async function renderBeatPages() {
+    if (!beats.length) return;
+
+    const margin = LAYOUT.editorialMarginLarge;
+    const contentWidth = PAGE_WIDTH - (margin * 2);
+    const columnWidth = (contentWidth - LAYOUT.columnGap) / 2;
+    const maxContentY = PAGE_HEIGHT - LAYOUT.footerHeight - margin;
+
+    let currentPage = null;
+    let cursorY = 0;
+    let currentColumn = 0; // 0 = left, 1 = right
+
+    function startNewPage() {
+      doc.addPage({ margin: margin });
+      doc.rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT).fill("#ffffff");
+      
+      // Section label on each beats page
+      doc.save();
+      doc.fillColor("#888888");
+      doc.fontSize(TYPOGRAPHY.sectionLabelSize);
+      doc.text("STORY BEATS", margin, margin, {
+        characterSpacing: TYPOGRAPHY.letterSpacing,
+      });
+      doc.restore();
+
+      // Horizontal rule
+      doc.save();
+      doc.strokeColor("#e0e0e0");
+      doc.lineWidth(0.5);
+      doc.moveTo(margin, margin + 20).lineTo(margin + contentWidth, margin + 20).stroke();
+      doc.restore();
+
+      cursorY = margin + 50;
+      currentColumn = 0;
+      currentPage = true;
+    }
+
+    // Calculate beat height estimate
+    function estimateBeatHeight(beat, hasImages) {
+      let height = 30; // Title
+      const textLines = Math.ceil((beat.text || "").length / 45);
+      height += textLines * 14; // Text
+      if (hasImages) height += 120; // Image thumbnails
+      height += LAYOUT.beatSpacing;
+      return Math.min(height, 300); // Cap max height
+    }
+
+    // Collect images for each beat
+    const beatImages = {};
+    for (let i = 0; i < beats.length; i++) {
+      const images = [];
+      // Check for visual at this beat index
+      if (visuals[i]) {
+        const v = visuals[i];
+        const buf = await getImageBuffer(v.image || v.dataUrl || v.url);
+        if (buf) images.push(buf);
+      }
+      // Check for storyboard at this beat index
+      if (storyboards[i]) {
+        const s = storyboards[i];
+        const buf = await getImageBuffer(s.image || s.dataUrl || s.url);
+        if (buf) images.push(buf);
+      }
+      beatImages[i] = images;
+    }
+
+    startNewPage();
+
+    for (let i = 0; i < beats.length; i++) {
+      const beat = beats[i] || {};
+      const beatTitle = beat.title || `Beat ${i + 1}`;
+      const beatText = beat.text || "";
+      const images = beatImages[i] || [];
+
+      const estimatedHeight = estimateBeatHeight(beat, images.length > 0);
+      const colX = currentColumn === 0 
+        ? margin 
+        : margin + columnWidth + LAYOUT.columnGap;
+
+      // Check if we need a new page or column
+      if (cursorY + estimatedHeight > maxContentY) {
+        if (currentColumn === 0) {
+          // Move to right column
+          currentColumn = 1;
+          cursorY = margin + 50;
+        } else {
+          // New page
+          addFooter();
+          startNewPage();
+        }
+      }
+
+      const beatX = currentColumn === 0 
+        ? margin 
+        : margin + columnWidth + LAYOUT.columnGap;
+
+      // Beat title - uppercase, tracked
+      doc.save();
+      doc.fillColor("#333333");
+      doc.fontSize(TYPOGRAPHY.beatTitleSize);
+      doc.text(beatTitle.toUpperCase(), beatX, cursorY, {
+        width: columnWidth,
+        characterSpacing: 1,
+      });
+      doc.restore();
+
+      cursorY = doc.y + 8;
+
+      // Beat text
+      if (beatText) {
+        doc.save();
+        doc.fillColor("#555555");
+        doc.fontSize(TYPOGRAPHY.beatTextSize);
+        doc.text(beatText, beatX, cursorY, {
+          width: columnWidth,
+          lineGap: 4,
+          align: "left",
+        });
+        doc.restore();
+        cursorY = doc.y + 12;
+      }
+
+      // Images (thumbnails)
+      if (images.length > 0) {
+        const thumbWidth = Math.min(100, (columnWidth - 10) / images.length);
+        const thumbHeight = thumbWidth * 0.56; // 16:9 ratio
+
+        for (let j = 0; j < images.length; j++) {
+          const thumbX = beatX + (j * (thumbWidth + 10));
+          try {
+            doc.image(images[j], thumbX, cursorY, {
+              fit: [thumbWidth, thumbHeight],
+              align: "center",
+              valign: "center",
+            });
+          } catch (e) {
+            // Draw placeholder
+            doc.save();
+            doc.rect(thumbX, cursorY, thumbWidth, thumbHeight).fill("#f0f0f0");
+            doc.restore();
+          }
+        }
+        cursorY += thumbHeight + 10;
+      }
+
+      cursorY += LAYOUT.beatSpacing;
+    }
+
+    addFooter();
+  }
+
+  // -------------------- RENDER ALL PAGES --------------------
+  await renderHeroPage();
+  renderIntroPage();
+  await renderBeatPages();
+
+  doc.end();
+  return done;
 }
 
 async function renderPdfToBuffer(deck, includeSet, layoutOptions) {
@@ -472,9 +920,12 @@ export default async function exportPdf(req, res) {
   try {
     const body = req.body || {};
 
-    // Frontend sends { deck, include, saveToAccount, layoutOptions }
+    // Frontend sends { deck, include, saveToAccount, layoutOptions, template }
     const deckIn = body.deck || body;
     const deck = normalizeDeckPayload(deckIn);
+
+    // Check for pitch_deck_editorial template
+    const template = String(body.template || "").toLowerCase();
 
     const includeRaw = Array.isArray(body.include) ? body.include : body.sections;
     const includeSet = Array.isArray(includeRaw)
@@ -493,7 +944,15 @@ export default async function exportPdf(req, res) {
 
     const filename = `${safeFilename(deck.title || "aran-deck")}.pdf`;
 
-    const pdfBuffer = await renderPdfToBuffer(deck, includeSet, layoutOptions);
+    // Route to appropriate renderer based on template
+    let pdfBuffer;
+    if (template === "pitch_deck_editorial") {
+      // Use the new cinematic editorial template
+      pdfBuffer = await renderPitchDeckEditorialPdf(deck);
+    } else {
+      // Use existing renderers
+      pdfBuffer = await renderPdfToBuffer(deck, includeSet, layoutOptions);
+    }
 
     // If requested, upload to Storage and optionally attach to a deck row.
     if (saveToAccount && user) {
