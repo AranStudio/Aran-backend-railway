@@ -123,6 +123,7 @@ export async function storyIntelligenceGenerate(req, res) {
     const response = {
       success: true,
       title: result.title || "Untitled Story",
+      story_type: storyType || "general", // REQUIRED - never undefined
       storyProfile: result.storyProfile,
       beats: result.beats, // REQUIRED - must be non-empty array
       altConcepts: result.altConcepts || [],
@@ -258,6 +259,7 @@ export async function storyIntelligenceApplyConcept(req, res) {
     return res.json({
       success: true,
       title: result.title,
+      story_type: body.storyType || "general", // REQUIRED - never undefined
       storyProfile: result.storyProfile,
       beats: result.beats, // REQUIRED - regenerated beats reflecting selected concept
       altConcepts: result.altConcepts, // Optional - new alt concepts (but not primary output)
@@ -344,6 +346,7 @@ export async function storyIntelligenceRegenerateBeat(req, res) {
 
     return res.json({
       success: true,
+      story_type: body.storyType || "general", // REQUIRED - never undefined
       updatedBeat,
       critique,
     });

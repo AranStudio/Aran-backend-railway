@@ -69,7 +69,11 @@ Generate a short title + 6 story beats.
       throw err;
     }
 
-    return res.json({ title, beats });
+    return res.json({ 
+      title, 
+      beats,
+      story_type: contentType || "general", // REQUIRED - never undefined
+    });
   } catch (err) {
     console.error("generate error:", err);
     return res.status(err.status || 500).json({
