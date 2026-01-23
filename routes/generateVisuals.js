@@ -47,7 +47,6 @@ This specific beat: ${beat}
         model: "gpt-image-1",
         prompt: framePrompt,
         size: "1024x1024",
-        response_format: "b64_json",
       });
 
       const b64 = response?.data?.[0]?.b64_json;
@@ -61,8 +60,9 @@ This specific beat: ${beat}
     return res.json({ frames });
   } catch (err) {
     console.error("generateVisuals error:", err);
-    return res.status(500).json({
-      error: err?.message || "Visuals failed",
-    });
+    if (err.status === 400) {
+      return res.status(400).json({ error: err.message });
+    }
+    return res.status(500).json({ error: "Generation failed" });
   }
 }
