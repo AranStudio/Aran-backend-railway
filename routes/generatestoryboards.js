@@ -3,9 +3,27 @@ import { openai, asDataUrlFromB64 } from "../utils/openaiClient.js";
 
 export default async function generateStoryboards(req, res) {
   try {
+    // Log incoming payload for debugging
+    console.log("generate-storyboards payload:", JSON.stringify(req.body, null, 2));
+
     const { prompt, contentType, beats } = req.body || {};
-    if (!prompt) return res.status(400).json({ error: "Missing prompt" });
-    if (!Array.isArray(beats) || beats.length === 0) return res.json({ frames: [] });
+
+    // Validate required fields with helpful error messages
+    if (!prompt) {
+      return res.status(400).json({ error: "Missing required field: prompt" });
+    }
+
+    if (beats === undefined || beats === null) {
+      return res.status(400).json({ error: "Missing required field: beats" });
+    }
+
+    if (!Array.isArray(beats)) {
+      return res.status(400).json({ error: "Invalid field: beats must be an array" });
+    }
+
+    if (beats.length === 0) {
+      return res.json({ frames: [] });
+    }
 
     const frames = [];
 
