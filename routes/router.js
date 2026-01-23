@@ -9,6 +9,11 @@ import generateVisuals from "./generateVisuals.js";
 import generateStoryboards from "./generatestoryboards.js";
 import generateToneImage from "./generateToneImage.js";
 
+// Story Intelligence Engine
+import storyIntelligenceGenerate, {
+  storyIntelligenceHealth,
+} from "./storyIntelligence.js";
+
 import exportProject from "./export.js";
 import exportPdf from "./exportPdf.js";
 import exportImage from "./exportImage.js";
@@ -73,5 +78,9 @@ router.post("/video/shotlist", videoShotlistUpload, videoShotlistHandler);
 router.post("/daily-spark", dailySpark);
 router.post("/analyze/dna", analyzeDna);
 router.post("/analyze/emotions", analyzeEmotions);
+
+// Story Intelligence Engine
+router.post("/story/intelligence/generate", storyIntelligenceGenerate);
+router.get("/story/intelligence/health", storyIntelligenceHealth);
 
 export default router;
