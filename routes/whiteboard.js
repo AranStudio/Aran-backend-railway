@@ -7,9 +7,21 @@ function extractB64(img) {
 }
 
 function safeJsonParse(text) {
+  if (!text || typeof text !== "string") return null;
+  
+  // Try direct parse first
   try {
-    return JSON.parse(text);
+    return JSON.parse(text.trim());
   } catch {
+    // Try to extract JSON from markdown or extra text
+    const objectMatch = text.match(/\{[\s\S]*\}/);
+    if (objectMatch) {
+      try {
+        return JSON.parse(objectMatch[0]);
+      } catch {
+        // Fall through
+      }
+    }
     return null;
   }
 }
@@ -26,18 +38,20 @@ export default async function whiteboardInterpret(req, res) {
 
     const system =
       "You are Aran, a story engine for filmmakers and creatives. " +
-      "Interpret a user sketch and turn it into a concise, usable story brief.";
+      "Interpret a user sketch and turn it into a concise, usable story brief.\n\n" +
+      "CRITICAL: Return ONLY valid JSON. No markdown code fences. No explanations before or after.";
 
     const userText =
       `Content type hint: ${contentTypeHint || "(none)"}\n` +
       `User intent: ${intent || "Turn this sketch into a story prompt and beats."}\n\n` +
-      "Return ONLY valid JSON with keys: title, contentType, prompt, beats (array of 6-12 strings).";
+      "Return ONLY valid JSON with keys: title, contentType, prompt, beats (array of 6-12 strings). No markdown.";
 
+    // Note: response_format removed - causes 400 error with some model configurations
+    // JSON output is enforced via system prompt instead
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0.6,
       max_tokens: 800,
-      response_format: { type: "json_object" },
       messages: [
         { role: "system", content: system },
         {
@@ -54,6 +68,7 @@ export default async function whiteboardInterpret(req, res) {
     const parsed = safeJsonParse(content);
 
     if (!parsed) {
+      console.warn("[whiteboard] Failed to parse JSON response, returning raw");
       return res.json({ raw: content });
     }
 
