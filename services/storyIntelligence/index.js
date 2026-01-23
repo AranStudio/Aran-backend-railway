@@ -25,6 +25,9 @@ import { chatCompletion } from "../../utils/openaiClient.js";
 // Maximum regeneration attempts to avoid latency
 const MAX_REGENERATION_LOOPS = 2;
 
+// Dev logging helper
+const isDev = () => process.env.NODE_ENV !== "production";
+
 /**
  * Generate a unique, memorable title for a story
  * @param {Object} params - Generation parameters
@@ -132,6 +135,10 @@ export async function generateStoryIntelligence({
     // ============================================
     // STEP 1: Generate Story Profile
     // ============================================
+    if (isDev()) {
+      console.log("[DEV] generateStoryIntelligence: Starting profile generation...");
+    }
+    
     let storyProfile = await generateProfile({
       prompt,
       storyType,
@@ -144,14 +151,31 @@ export async function generateStoryIntelligence({
       ending,
     });
 
+    if (isDev()) {
+      console.log("[DEV] generateStoryIntelligence: Profile generated. Structure:", storyProfile?.structure);
+    }
+
     // ============================================
-    // STEP 2: Generate Beats
+    // STEP 2: Generate Beats (ALWAYS - CRITICAL)
     // ============================================
+    if (isDev()) {
+      console.log("[DEV] generateStoryIntelligence: Starting beat generation...");
+    }
+    
     let beats = await generateBeats({
       profile: storyProfile,
       prompt,
       brand,
     });
+
+    // CRITICAL: Validate beats were generated
+    if (!beats || !Array.isArray(beats) || beats.length === 0) {
+      throw new Error("Beat generation failed: No beats returned");
+    }
+
+    if (isDev()) {
+      console.log("[DEV] generateStoryIntelligence: Beats generated. Count:", beats.length);
+    }
 
     // ============================================
     // STEP 3: Critique Pass
@@ -393,14 +417,25 @@ export async function applyConceptAndRegenerate({
   const startTime = Date.now();
   const metadata = {
     appliedConcept: selectedConcept?.id || null,
+    appliedConceptName: selectedConcept?.name || null,
+    appliedConceptOneLiner: selectedConcept?.oneLiner || null,
     regenerationAttempts: 0,
     totalDurationMs: 0,
     model: "gpt-4o",
   };
 
+  if (isDev()) {
+    console.log("[DEV] applyConceptAndRegenerate called with selectedConcept:", {
+      id: selectedConcept?.id,
+      name: selectedConcept?.name,
+      oneLiner: selectedConcept?.oneLiner,
+      hasProfilePatch: !!selectedConcept?.profilePatch,
+    });
+  }
+
   try {
     // ============================================
-    // STEP 1: Apply concept to profile
+    // STEP 1: Build profile with concept as hard constraint
     // ============================================
     let storyProfile = currentProfile ? { ...currentProfile } : await generateProfile({
       prompt,
@@ -412,35 +447,55 @@ export async function applyConceptAndRegenerate({
       risk: controls.risk || "interesting",
     });
 
-    // Apply the selected concept's profilePatch
+    // Apply the selected concept's profilePatch (tone/structure/risk/ending/etc)
     if (selectedConcept?.profilePatch) {
+      if (isDev()) {
+        console.log("[DEV] Applying profilePatch:", selectedConcept.profilePatch);
+      }
       storyProfile = {
         ...storyProfile,
         ...selectedConcept.profilePatch,
       };
     }
 
-    // Add concept's oneLiner as a creative hook / north star
+    // CRITICAL: Inject concept as a HARD CONSTRAINT
+    // The concept's oneLiner becomes the guiding principle for all beats
     if (selectedConcept?.oneLiner) {
+      storyProfile.conceptNorthStar = selectedConcept.oneLiner;
       storyProfile.creativeHooks = [
         selectedConcept.oneLiner,
-        ...(storyProfile.creativeHooks || []),
+        ...(storyProfile.creativeHooks || []).filter(h => h !== selectedConcept.oneLiner),
       ].slice(0, 6);
-      storyProfile.conceptNorthStar = selectedConcept.oneLiner;
+      
+      if (isDev()) {
+        console.log("[DEV] Set conceptNorthStar:", selectedConcept.oneLiner);
+      }
     }
 
     // ============================================
-    // STEP 2: Regenerate beats with new profile
+    // STEP 2: REGENERATE BEATS with concept as hard constraint
+    // This is the CRITICAL step - beats MUST reflect the selected concept
     // ============================================
-    const conceptGuidance = selectedConcept?.oneLiner
-      ? `\n\nCONCEPT NORTH STAR: ${selectedConcept.oneLiner}\nApply this concept throughout the beats.`
-      : "";
+    if (isDev()) {
+      console.log("[DEV] Regenerating beats with concept constraint...");
+    }
 
     const beats = await generateBeats({
       profile: storyProfile,
-      prompt: prompt + conceptGuidance,
+      prompt,
       brand,
+      conceptNorthStar: selectedConcept?.oneLiner || null, // Pass concept directly to beat generator
     });
+
+    // CRITICAL: Validate beats were generated
+    if (!beats || !Array.isArray(beats) || beats.length === 0) {
+      throw new Error("Apply concept failed: No beats generated");
+    }
+
+    if (isDev()) {
+      console.log("[DEV] applyConceptAndRegenerate: Beats regenerated. Count:", beats.length);
+      console.log("[DEV] Beat names:", beats.map(b => b.name).join(", "));
+    }
 
     // ============================================
     // STEP 3: Run critique pass

@@ -146,9 +146,22 @@ function getBeatNames(structure, count) {
  * @param {Object} profile - The story profile
  * @param {string} prompt - Original user prompt
  * @param {string} brand - Brand name (optional)
+ * @param {string} conceptNorthStar - Optional concept to use as a hard constraint
  * @returns {Promise<Array>} - Array of beat objects
  */
-export async function generateBeats({ profile, prompt, brand }) {
+export async function generateBeats({ profile, prompt, brand, conceptNorthStar }) {
+  const isDev = process.env.NODE_ENV !== "production";
+  
+  if (isDev) {
+    console.log("[DEV] generateBeats called with:", {
+      structure: profile?.structure,
+      format: profile?.format,
+      durationSec: profile?.constraints?.durationSec,
+      conceptNorthStar: conceptNorthStar || "(none)",
+      promptLength: prompt?.length,
+    });
+  }
+
   const beatCount = calculateBeatCount(
     profile.constraints.durationSec,
     profile.format,
@@ -157,6 +170,13 @@ export async function generateBeats({ profile, prompt, brand }) {
 
   const beatNames = getBeatNames(profile.structure, beatCount);
   const formatGuidance = FORMAT_GUIDANCE[profile.format] || FORMAT_GUIDANCE.commercial;
+
+  // Build concept constraint section if provided
+  const conceptConstraint = conceptNorthStar 
+    ? `\n\nCONCEPT NORTH STAR (HARD CONSTRAINT - MUST PERMEATE ALL BEATS):
+"${conceptNorthStar}"
+This concept must be the guiding principle for ALL beats. Each beat must clearly reflect this concept.`
+    : "";
 
   const systemPrompt = `You are an expert story architect. Generate story beats that STRICTLY follow the provided story profile.
 
@@ -170,6 +190,7 @@ CRITICAL REQUIREMENTS:
 7. Ending type: ${profile.ending}
 
 FORMAT GUIDANCE: ${formatGuidance}
+${conceptConstraint}
 
 CREATIVE HOOKS TO INCORPORATE:
 ${profile.creativeHooks.map((h, i) => `${i + 1}. ${h}`).join("\n")}
@@ -229,6 +250,9 @@ Remember: Beat names should be varied and story-type aware, NOT generic "Beat 1"
   const parsed = safeJsonParse(result.text);
 
   if (!parsed || !Array.isArray(parsed.beats)) {
+    if (isDev) {
+      console.error("[DEV] Failed to parse beats. Raw response:", result.text?.substring(0, 500));
+    }
     throw new Error("Failed to parse beats from LLM response");
   }
 
@@ -246,7 +270,15 @@ Remember: Beat names should be varied and story-type aware, NOT generic "Beat 1"
 
   // Ensure we have at least 3 beats
   if (beats.length < 3) {
+    if (isDev) {
+      console.error("[DEV] Generated too few beats:", beats.length);
+    }
     throw new Error("Generated too few beats");
+  }
+
+  if (isDev) {
+    console.log("[DEV] generateBeats SUCCESS - beats.length:", beats.length);
+    console.log("[DEV] Beat names:", beats.map(b => b.name).join(", "));
   }
 
   return beats;
