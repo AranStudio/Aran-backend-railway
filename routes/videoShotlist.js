@@ -224,6 +224,7 @@ async function buildShotlist(videoPath, threshold) {
 
     return {
       title: "Shotlist",
+      story_type: "shot_list", // Shot list always uses 'shot_list' story_type
       durationSeconds: duration,
       usedThreshold,
       shots,

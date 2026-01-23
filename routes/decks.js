@@ -100,9 +100,13 @@ function buildShareMetaForList(row) {
   
   const tool = validateTool(row.tool);
   
+  // Ensure story_type is NEVER undefined - use fallback based on tool
+  const storyType = row.story_type || (tool === "shot_list" ? "shot_list" : tool === "canvas" ? "canvas" : "general");
+  
   return {
     ...row,
     tool,
+    story_type: storyType, // REQUIRED - never undefined
     // Share URL can be built if we have the share_code from the view
     // For now, return null since we don't have content in list view
     shareUrl: null,
@@ -123,7 +127,10 @@ function decorateShareMeta(row) {
   // Use the database tool column if available, otherwise derive from content
   const tool = validateTool(row.tool || normalized.tool);
   
-  return { ...row, tool, shareUrl, mailto };
+  // Ensure story_type is NEVER undefined - use fallback based on tool
+  const storyType = row.story_type || normalized.contentType || (tool === "shot_list" ? "shot_list" : tool === "canvas" ? "canvas" : "general");
+  
+  return { ...row, tool, story_type: storyType, shareUrl, mailto };
 }
 
 async function requireUser(req, res, next) {
@@ -395,8 +402,9 @@ router.post("/save", requireUser, async (req, res) => {
     // Store tool in content as well for consistency
     const contentWithTitle = { ...normalized, title, tool: toolValue };
     
-    // Extract story_type for indexing
-    const storyType = normalized.contentType || null;
+    // Extract story_type for indexing - NEVER allow undefined/null
+    // Priority: explicit body.story_type > normalized.contentType > fallback based on tool
+    const storyType = body.story_type || normalized.contentType || (toolValue === "shot_list" ? "shot_list" : toolValue === "canvas" ? "canvas" : "general");
 
     // Build the row with all columns
     const row = {

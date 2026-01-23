@@ -231,12 +231,21 @@ export function normalizeDeckPayload(input = {}) {
   // Determine tool type for proper categorization
   const tool = determineToolType(src);
 
+  // Extract contentType for story categorization
+  const contentType = coerceString(src.contentType || src.type || src?.content?.type || src.story_type || src?.content?.story_type || "").trim();
+  
+  // Determine story_type - NEVER allow undefined
+  // Priority: explicit story_type > contentType > derive from tool > 'general'
+  const storyType = coerceString(src.story_type || src?.content?.story_type || contentType || "").trim() || 
+                    (tool === "shot_list" ? "shot_list" : tool === "canvas" ? "canvas" : "general");
+
   const normalized = {
     id: src.id,
     title: coerceString(src.title || src?.content?.title || "").trim() || null,
     prompt: coerceString(src.prompt || src?.content?.prompt || "").trim(),
     brief: normalizeTextBlock(src.brief || src?.content?.brief || ""),
-    contentType: coerceString(src.contentType || src.type || src?.content?.type || "").trim(),
+    contentType: contentType, // Keep for backward compatibility
+    story_type: storyType, // REQUIRED - never undefined, for frontend rendering
     tool, // ✅ Include tool field for categorization
     toneImage: src.toneImage || src.tone_image || src?.content?.toneImage || null,
     beatTitles,
@@ -269,6 +278,7 @@ export function buildExportPayload(deck, includeSections) {
     prompt: deck.prompt,
     brief: deck.brief,
     contentType: deck.contentType,
+    story_type: deck.story_type || deck.contentType || "general", // REQUIRED - never undefined
     toneImage: deck.toneImage,
     shareCode: deck.shareCode,
     meta: deck.meta || {},

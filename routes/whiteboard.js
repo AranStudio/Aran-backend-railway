@@ -63,6 +63,7 @@ export default async function whiteboardInterpret(req, res) {
     return res.json({
       title: parsed.title || "",
       contentType: parsed.contentType || "",
+      story_type: "canvas", // Canvas/whiteboard always uses 'canvas' story_type
       prompt: parsed.prompt || "",
       beats,
     });

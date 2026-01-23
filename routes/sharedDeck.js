@@ -35,6 +35,10 @@ export default async function sharedDeck(req, res) {
     const normalized = normalizeDeckPayload(data.content || {});
     const shareUrl = buildShareUrl(normalized.shareCode);
 
+    // Determine story_type - NEVER allow undefined
+    // Priority: normalized.contentType > derive from tool > 'general'
+    const storyType = normalized.contentType || (normalized.tool === "shot_list" ? "shot_list" : normalized.tool === "canvas" ? "canvas" : "general");
+
     return res.json({
       ok: true,
       deck: {
@@ -42,6 +46,7 @@ export default async function sharedDeck(req, res) {
         id: data.id,
         title: data.title || normalized.title,
         prompt: data.prompt || normalized.prompt,
+        story_type: storyType, // REQUIRED - never undefined
         export_pdf_url: data.export_pdf_url || null,
       },
       shareUrl,
