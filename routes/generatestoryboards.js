@@ -24,13 +24,15 @@ Beat ${i + 1}: ${beat}
         model: "gpt-image-1",
         prompt: imgPrompt,
         size: "1024x1024",
-        // IMPORTANT: DO NOT pass response_format here.
+        response_format: "b64_json",
       });
 
-      const b64 = img?.data?.[0]?.b64_json || null;
-      const dataUrl = b64 ? asDataUrlFromB64(b64) : null;
+      const b64 = img?.data?.[0]?.b64_json;
+      const dataUrl = asDataUrlFromB64(b64);
 
-      frames.push({ beatIndex: i, dataUrl });
+      if (dataUrl) {
+        frames.push({ beatIndex: i, dataUrl });
+      }
     }
 
     return res.json({ frames });
