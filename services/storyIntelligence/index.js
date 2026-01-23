@@ -8,20 +8,100 @@
  * 3. Run critique pass
  * 4. Regenerate if needed (max 2 loops)
  * 5. Generate alt concepts
- * 6. Return complete response
+ * 6. Generate title (if not provided)
+ * 7. Return complete response
  */
 
 import { generateProfile, regenerateProfileElements } from "./profile.js";
-import { generateBeats, regenerateBeats } from "./beatGenerator.js";
+import { generateBeats, regenerateBeats, regenerateSingleBeat } from "./beatGenerator.js";
 import {
   critiqueBeats,
   getRegenerationStrategy,
   generateAltConcepts,
   CRITIQUE_THRESHOLDS,
 } from "./critic.js";
+import { chatCompletion } from "../../utils/openaiClient.js";
 
 // Maximum regeneration attempts to avoid latency
 const MAX_REGENERATION_LOOPS = 2;
+
+/**
+ * Generate a unique, memorable title for a story
+ * @param {Object} params - Generation parameters
+ * @returns {Promise<string>} - Generated title
+ */
+export async function generateTitle({ prompt, storyProfile, beats, brand }) {
+  const beatSummary = beats
+    .slice(0, 3)
+    .map((b) => b.name || b.beatText?.substring(0, 50))
+    .filter(Boolean)
+    .join(", ");
+
+  const systemPrompt = `You are a creative title generator for film/advertising projects.
+Generate a SHORT, MEMORABLE title (2-5 words) that:
+1. Captures the essence of the story
+2. Is unique and not generic
+3. Works as a project name
+4. Avoids clichés like "The Journey" or "A Story of..."
+
+Respond with ONLY valid JSON:
+{
+  "title": "The Generated Title"
+}`;
+
+  const userPrompt = `Generate a title for:
+PROMPT: ${prompt}
+${brand ? `BRAND: ${brand}` : ""}
+TONE: ${storyProfile?.tone || ""}
+STRUCTURE: ${storyProfile?.structure || ""}
+KEY BEATS: ${beatSummary}
+
+Create a distinctive, memorable title.`;
+
+  try {
+    const result = await chatCompletion({
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      model: "gpt-4o-mini",
+      responseFormat: { type: "json_object" },
+      temperature: 0.8,
+      maxTokens: 100,
+    });
+
+    const parsed = JSON.parse(result.text);
+    if (parsed?.title && typeof parsed.title === "string" && parsed.title.trim()) {
+      return parsed.title.trim();
+    }
+  } catch (e) {
+    console.warn("Title generation failed, using fallback:", e.message);
+  }
+
+  // Deterministic fallback: extract key words from prompt
+  return generateFallbackTitle(prompt, brand);
+}
+
+/**
+ * Generate a deterministic fallback title when LLM fails
+ */
+function generateFallbackTitle(prompt, brand) {
+  const words = prompt
+    .replace(/[^a-zA-Z0-9\s]/g, "")
+    .split(/\s+/)
+    .filter((w) => w.length > 3)
+    .slice(0, 3);
+
+  if (words.length >= 2) {
+    return words.slice(0, 2).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+  }
+
+  if (brand) {
+    return `${brand} Story`;
+  }
+
+  return `Story ${Date.now().toString(36).slice(-4).toUpperCase()}`;
+}
 
 /**
  * Main entry point for the Story Intelligence Engine
@@ -143,7 +223,17 @@ export async function generateStoryIntelligence({
     });
 
     // ============================================
-    // STEP 6: Prepare Response
+    // STEP 6: Generate Title
+    // ============================================
+    const title = await generateTitle({
+      prompt,
+      storyProfile,
+      beats,
+      brand,
+    });
+
+    // ============================================
+    // STEP 7: Prepare Response
     // ============================================
     metadata.totalDurationMs = Date.now() - startTime;
 
@@ -156,6 +246,7 @@ export async function generateStoryIntelligence({
 
     return {
       success: true,
+      title,
       storyProfile,
       beats,
       altConcepts,
@@ -283,9 +374,144 @@ export async function generateQuick({
   return { profile, beats };
 }
 
+/**
+ * Apply a selected alternative concept and regenerate beats
+ * @param {Object} params - Apply concept parameters
+ * @returns {Promise<Object>} - Updated story with regenerated beats
+ */
+export async function applyConceptAndRegenerate({
+  prompt,
+  storyType = "commercial",
+  brand,
+  audience,
+  durationSec = 30,
+  constraints = {},
+  selectedConcept,
+  currentProfile,
+  controls = {},
+}) {
+  const startTime = Date.now();
+  const metadata = {
+    appliedConcept: selectedConcept?.id || null,
+    regenerationAttempts: 0,
+    totalDurationMs: 0,
+    model: "gpt-4o",
+  };
+
+  try {
+    // ============================================
+    // STEP 1: Apply concept to profile
+    // ============================================
+    let storyProfile = currentProfile ? { ...currentProfile } : await generateProfile({
+      prompt,
+      storyType,
+      brand,
+      audience,
+      durationSec,
+      constraints,
+      risk: controls.risk || "interesting",
+    });
+
+    // Apply the selected concept's profilePatch
+    if (selectedConcept?.profilePatch) {
+      storyProfile = {
+        ...storyProfile,
+        ...selectedConcept.profilePatch,
+      };
+    }
+
+    // Add concept's oneLiner as a creative hook / north star
+    if (selectedConcept?.oneLiner) {
+      storyProfile.creativeHooks = [
+        selectedConcept.oneLiner,
+        ...(storyProfile.creativeHooks || []),
+      ].slice(0, 6);
+      storyProfile.conceptNorthStar = selectedConcept.oneLiner;
+    }
+
+    // ============================================
+    // STEP 2: Regenerate beats with new profile
+    // ============================================
+    const conceptGuidance = selectedConcept?.oneLiner
+      ? `\n\nCONCEPT NORTH STAR: ${selectedConcept.oneLiner}\nApply this concept throughout the beats.`
+      : "";
+
+    const beats = await generateBeats({
+      profile: storyProfile,
+      prompt: prompt + conceptGuidance,
+      brand,
+    });
+
+    // ============================================
+    // STEP 3: Run critique pass
+    // ============================================
+    const critique = await critiqueBeats({
+      beats,
+      profile: storyProfile,
+      prompt,
+      brand,
+      productCategory: constraints.productCategory,
+    });
+
+    // ============================================
+    // STEP 4: Generate new alternative concepts
+    // ============================================
+    const altConcepts = await generateAltConcepts({
+      prompt,
+      profile: storyProfile,
+      beats,
+      count: 3,
+    });
+
+    // ============================================
+    // STEP 5: Optionally regenerate title
+    // ============================================
+    const title = await generateTitle({
+      prompt,
+      storyProfile,
+      beats,
+      brand,
+    });
+
+    // ============================================
+    // STEP 6: Prepare Response
+    // ============================================
+    metadata.totalDurationMs = Date.now() - startTime;
+
+    const finalCritique = {
+      ...critique,
+      passedThresholds: !critique.needsRegeneration,
+      thresholds: CRITIQUE_THRESHOLDS,
+    };
+
+    return {
+      success: true,
+      title,
+      storyProfile,
+      beats,
+      altConcepts,
+      critique: finalCritique,
+      metadata,
+    };
+  } catch (error) {
+    metadata.totalDurationMs = Date.now() - startTime;
+
+    return {
+      success: false,
+      error: error.message || "Apply concept failed",
+      title: null,
+      storyProfile: currentProfile || null,
+      beats: [],
+      altConcepts: [],
+      critique: null,
+      metadata,
+    };
+  }
+}
+
 // Export all submodules for direct access if needed
 export { generateProfile, regenerateProfileElements } from "./profile.js";
-export { generateBeats, regenerateBeats } from "./beatGenerator.js";
+export { generateBeats, regenerateBeats, regenerateSingleBeat } from "./beatGenerator.js";
 export {
   critiqueBeats,
   shouldRegenerate,
@@ -295,6 +521,8 @@ export {
 
 export default {
   generateStoryIntelligence,
+  applyConceptAndRegenerate,
+  generateTitle,
   validateInput,
   generateQuick,
 };

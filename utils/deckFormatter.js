@@ -83,6 +83,64 @@ export function decodeDataUrlImage(dataUrl) {
   }
 }
 
+/**
+ * Determine the tool type based on deck content
+ * @param {Object} src - Source deck data
+ * @returns {string} - Tool type: "story_engine" | "shot_list" | "canvas"
+ */
+function determineToolType(src) {
+  // If tool is explicitly set, use it
+  if (src.tool && typeof src.tool === "string") {
+    const tool = src.tool.toLowerCase();
+    if (["story_engine", "shot_list", "canvas"].includes(tool)) {
+      return tool;
+    }
+  }
+
+  // Check content.tool as well
+  if (src?.content?.tool && typeof src.content.tool === "string") {
+    const tool = src.content.tool.toLowerCase();
+    if (["story_engine", "shot_list", "canvas"].includes(tool)) {
+      return tool;
+    }
+  }
+
+  // Infer from content
+  const hasStoryProfile = !!(src.storyProfile || src?.content?.storyProfile);
+  const hasCritique = !!(src.critique || src?.content?.critique);
+  const hasAltConcepts = Array.isArray(src.altConcepts) || Array.isArray(src?.content?.altConcepts);
+  
+  // Story engine has these unique fields
+  if (hasStoryProfile || hasCritique || hasAltConcepts) {
+    return "story_engine";
+  }
+
+  // Check for shots array (shot_list specific)
+  const hasShots = Array.isArray(src.shots) && src.shots.length > 0;
+  const hasScenes = Array.isArray(src.scenes) && src.scenes.length > 0;
+  
+  if (hasShots && !hasScenes) {
+    return "shot_list";
+  }
+
+  // Check for canvas-specific markers
+  const hasCanvasData = !!(src.canvasData || src?.content?.canvasData);
+  const hasWhiteboardData = !!(src.whiteboard || src?.content?.whiteboard);
+  
+  if (hasCanvasData || hasWhiteboardData) {
+    return "canvas";
+  }
+
+  // Default to story_engine for new decks with beats
+  const hasBeats = Array.isArray(src.beats) && src.beats.length > 0;
+  if (hasBeats) {
+    return "story_engine";
+  }
+
+  // Fallback
+  return "story_engine";
+}
+
 export function normalizeDeckPayload(input = {}) {
   const src = input.deck && typeof input.deck === "object" ? input.deck : input;
 
@@ -99,12 +157,16 @@ export function normalizeDeckPayload(input = {}) {
 
   const suggestions = Array.isArray(src.suggestions) ? src.suggestions : [];
 
+  // Determine tool type for proper categorization
+  const tool = determineToolType(src);
+
   const normalized = {
     id: src.id,
-    title: coerceString(src.title || src?.content?.title || "Untitled").trim(),
+    title: coerceString(src.title || src?.content?.title || "").trim() || null,
     prompt: coerceString(src.prompt || src?.content?.prompt || "").trim(),
     brief: normalizeTextBlock(src.brief || src?.content?.brief || ""),
     contentType: coerceString(src.contentType || src.type || src?.content?.type || "").trim(),
+    tool, // ✅ Include tool field for categorization
     toneImage: src.toneImage || src.tone_image || src?.content?.toneImage || null,
     beatTitles,
     beats: beats.map((b, i) => normalizeLabeledEntry(b, beatTitles[i] || `Beat ${i + 1}`)),
@@ -115,6 +177,10 @@ export function normalizeDeckPayload(input = {}) {
     suggestions: suggestions.map((s) => normalizeSuggestion(s)).filter(Boolean),
     meta: typeof src.meta === "object" && src.meta !== null ? src.meta : {},
     shareCode: src.shareCode || src?.content?.shareCode || randomUUID(),
+    // Preserve story intelligence specific fields
+    storyProfile: src.storyProfile || src?.content?.storyProfile || null,
+    critique: src.critique || src?.content?.critique || null,
+    altConcepts: src.altConcepts || src?.content?.altConcepts || null,
   };
 
   return normalized;

@@ -219,6 +219,7 @@ export function getRegenerationStrategy(critique) {
 
 /**
  * Generate alternative concepts that are structurally different
+ * Returns structured objects with id, name, tagline, oneLiner, and profilePatch
  */
 export async function generateAltConcepts({ prompt, profile, beats, count = 3 }) {
   const mainConceptSummary = beats
@@ -239,14 +240,19 @@ Your alternatives must:
 2. Use DIFFERENT arcs (not ${profile.arc})
 3. Use DIFFERENT tones or approaches
 4. Still serve the same brief/prompt
-5. Be one-line pitches that a creative director could green-light
+5. Each concept needs a distinctive NAME and TAGLINE so users can differentiate them
 
 Respond with ONLY valid JSON:
 {
   "altConcepts": [
-    "One-line pitch for alt concept 1 using [different structure/arc]",
-    "One-line pitch for alt concept 2 using [different structure/arc]",
-    "One-line pitch for alt concept 3 using [different structure/arc]"
+    {
+      "name": "Short distinctive concept name (2-4 words)",
+      "tagline": "One catchy line that captures the essence",
+      "oneLiner": "Full one-line pitch describing the approach and what makes it different",
+      "structure": "suggested_structure",
+      "arc": "suggested_arc",
+      "tone": "suggested_tone"
+    }
   ]
 }`;
 
@@ -256,7 +262,12 @@ BRIEF: ${prompt}
 DURATION: ${profile.constraints.durationSec} seconds
 FORMAT: ${profile.format}
 
-Each alternative should be a complete one-liner pitch that suggests a completely different approach to telling this story.`;
+Each alternative should have:
+- A memorable NAME (like "The Silent Witness" or "Reverse Chronicle")
+- A punchy TAGLINE (like "What if the product could talk?" or "Start at the end, work backwards")
+- A complete ONE-LINER pitch describing the full approach
+
+Make each concept feel genuinely different and explorable.`;
 
   const result = await chatCompletion({
     messages: [
@@ -266,21 +277,59 @@ Each alternative should be a complete one-liner pitch that suggests a completely
     model: "gpt-4o",
     responseFormat: { type: "json_object" },
     temperature: 0.9, // High temperature for variety
-    maxTokens: 600,
+    maxTokens: 1000,
   });
 
   const parsed = safeJsonParse(result.text);
 
   if (!parsed || !Array.isArray(parsed.altConcepts)) {
-    // Fallback alt concepts
+    // Fallback alt concepts with proper structure
     return [
-      `Try a ${profile.structure === "three_act" ? "vignette" : "three_act"} structure with ${profile.arc === "positive_change" ? "ironic" : "positive_change"} arc`,
-      `Consider a ${profile.tone === "comedic" ? "documentary" : "comedic"} approach with object POV`,
-      `Explore a nonlinear structure with ${profile.ending === "resolved" ? "open" : "resolved"} ending`,
+      {
+        id: "alt-1",
+        name: "The Vignette Approach",
+        tagline: "Capture a single perfect moment",
+        oneLiner: `Try a ${profile.structure === "three_act" ? "vignette" : "three_act"} structure with ${profile.arc === "positive_change" ? "ironic" : "positive_change"} arc`,
+        profilePatch: {
+          structure: profile.structure === "three_act" ? "vignette" : "three_act",
+          arc: profile.arc === "positive_change" ? "ironic" : "positive_change",
+        },
+      },
+      {
+        id: "alt-2",
+        name: "The Object's Eye",
+        tagline: "What does the product see?",
+        oneLiner: `Consider a ${profile.tone === "comedic" ? "documentary" : "comedic"} approach with object POV`,
+        profilePatch: {
+          tone: profile.tone === "comedic" ? "documentary" : "comedic",
+          pov: "object_pov",
+        },
+      },
+      {
+        id: "alt-3",
+        name: "Reverse Chronicle",
+        tagline: "Begin at the destination",
+        oneLiner: `Explore a nonlinear structure with ${profile.ending === "resolved" ? "open" : "resolved"} ending`,
+        profilePatch: {
+          structure: "nonlinear",
+          ending: profile.ending === "resolved" ? "open" : "resolved",
+        },
+      },
     ];
   }
 
-  return parsed.altConcepts.slice(0, count);
+  // Normalize and add IDs to each concept
+  return parsed.altConcepts.slice(0, count).map((concept, index) => ({
+    id: `alt-${index + 1}`,
+    name: concept.name || `Alternative ${index + 1}`,
+    tagline: concept.tagline || "",
+    oneLiner: concept.oneLiner || concept.name || "",
+    profilePatch: {
+      ...(concept.structure ? { structure: concept.structure } : {}),
+      ...(concept.arc ? { arc: concept.arc } : {}),
+      ...(concept.tone ? { tone: concept.tone } : {}),
+    },
+  }));
 }
 
 export default {

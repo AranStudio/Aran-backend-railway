@@ -168,15 +168,32 @@ async function testFullGeneration() {
       allPassed = false;
     }
 
-    // Validate altConcepts
+    // Validate altConcepts (should be structured objects with name + tagline)
     if (Array.isArray(data.altConcepts) && data.altConcepts.length === 3) {
       log("✅ altConcepts length = 3", "green");
-      data.altConcepts.forEach((concept, i) => {
-        log(`   Alt ${i + 1}: "${concept.substring(0, 60)}..."`, "reset");
-      });
+      const firstAlt = data.altConcepts[0];
+      if (firstAlt.id && firstAlt.name && firstAlt.tagline && firstAlt.oneLiner) {
+        log("✅ altConcepts have structured format (id, name, tagline, oneLiner)", "green");
+        data.altConcepts.forEach((concept, i) => {
+          log(`   Alt ${i + 1}: "${concept.name}" - ${concept.tagline}`, "reset");
+        });
+      } else {
+        log("⚠️  altConcepts may be using old string format", "yellow");
+        data.altConcepts.forEach((concept, i) => {
+          const text = typeof concept === 'string' ? concept : concept.name || concept.oneLiner;
+          log(`   Alt ${i + 1}: "${text?.substring(0, 60)}..."`, "reset");
+        });
+      }
     } else {
       log(`❌ altConcepts should have 3 items, got ${data.altConcepts?.length || 0}`, "red");
       allPassed = false;
+    }
+
+    // Validate title (should never be "Untitled")
+    if (data.title && data.title !== "Untitled" && data.title !== "Untitled Story") {
+      log(`✅ title generated: "${data.title}"`, "green");
+    } else {
+      log(`⚠️  title is generic or missing: "${data.title}"`, "yellow");
     }
 
     // Validate metadata

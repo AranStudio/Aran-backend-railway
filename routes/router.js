@@ -12,7 +12,13 @@ import generateToneImage from "./generateToneImage.js";
 // Story Intelligence Engine
 import storyIntelligenceGenerate, {
   storyIntelligenceHealth,
+  storyIntelligenceApplyConcept,
+  storyIntelligenceRegenerateBeat,
 } from "./storyIntelligence.js";
+
+// Per-beat endpoints
+import generateStoryboardForBeat from "./storyboardForBeat.js";
+import generateVisualsForBeat from "./visualsForBeat.js";
 
 import exportProject from "./export.js";
 import exportPdf from "./exportPdf.js";
@@ -81,6 +87,25 @@ router.post("/analyze/emotions", analyzeEmotions);
 
 // Story Intelligence Engine
 router.post("/story/intelligence/generate", storyIntelligenceGenerate);
+router.post("/story/intelligence/apply-concept", storyIntelligenceApplyConcept);
+router.post("/story/intelligence/regenerate-beat", storyIntelligenceRegenerateBeat);
 router.get("/story/intelligence/health", storyIntelligenceHealth);
+
+// Per-beat generation endpoints
+router.post("/storyboard/generate-for-beat", generateStoryboardForBeat);
+router.post("/visuals/generate-for-beat", generateVisualsForBeat);
+
+// 404 handler for unmatched API routes (helps debug route mismatches)
+router.use((req, res, next) => {
+  const isDev = process.env.NODE_ENV !== "production";
+  if (isDev) {
+    console.warn(`[404] Route not found: ${req.method} ${req.originalUrl}`);
+  }
+  return res.status(404).json({
+    error: "Not found",
+    message: `Route ${req.method} ${req.path} does not exist`,
+    hint: "Check the API documentation or /api/story/intelligence/health for available endpoints",
+  });
+});
 
 export default router;
