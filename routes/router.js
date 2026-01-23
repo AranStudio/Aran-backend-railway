@@ -13,6 +13,8 @@ import exportProject from "./export.js";
 import exportPdf from "./exportPdf.js";
 import exportImage from "./exportImage.js";
 import exportOptions from "./exportOptions.js";
+import exportDeckPdf from "./exportDeckPdf.js";
+import exportDeckPngs, { exportSingleDeckPng } from "./exportDeckPngs.js";
 import sharedDeck from "./sharedDeck.js";
 import dailySpark from "./dailySpark.js";
 import analyzeDna from "./analyzeDna.js";
@@ -54,6 +56,11 @@ router.post("/export", exportProject);
 router.post("/export/pdf", exportPdf);
 router.post("/export/image", exportImage);
 router.get("/share/:code", sharedDeck);
+
+// Deck Builder Exports (PNG images -> PDF/ZIP)
+router.post("/export/deck-pdf", exportDeckPdf);
+router.post("/export/deck-pngs", exportDeckPngs);
+router.post("/export/deck-png", exportSingleDeckPng);
 
 // Beat evaluation (node tree)
 router.post("/evaluate-beats", evaluateBeats);
