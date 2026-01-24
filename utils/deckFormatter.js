@@ -318,6 +318,7 @@ export function normalizeDeckPayload(input = {}) {
   const normalized = {
     id: src.id,
     title: coerceString(src.title || src?.content?.title || "").trim() || null,
+    tagline: coerceString(src.tagline || src?.content?.tagline || "").trim() || null,
     prompt: coerceString(src.prompt || src?.content?.prompt || "").trim(),
     brief: normalizeTextBlock(src.brief || src?.content?.brief || ""),
     contentType: contentType, // Keep for backward compatibility
