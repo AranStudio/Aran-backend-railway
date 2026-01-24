@@ -68,8 +68,12 @@ const LIGHTWEIGHT_COLUMNS = [
   "id",
   "user_id",
   "title",
+  "tagline",
   "tool",
   "story_type",
+  "tone_image_url",
+  "beats_count",
+  "beats_preview",
   "created_at",
   "updated_at",
   "thumbnail_url",
@@ -82,15 +86,45 @@ const FULL_COLUMNS = [
   "id",
   "user_id",
   "title",
+  "tagline",
   "tool",
   "story_type",
   "content",
+  "tone_image_url",
+  "beats_count",
+  "beats_preview",
   "created_at",
   "updated_at",
   "thumbnail_url",
   "export_pdf_url",
   "prompt",
 ].join(",");
+
+function extractBeatTitle(beat, index) {
+  if (!beat) return `Beat ${index + 1}`;
+  if (typeof beat === "string") return beat.trim();
+  const candidate =
+    beat.title || beat.name || beat.intent || beat.text || beat.beatText || `Beat ${index + 1}`;
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : `Beat ${index + 1}`;
+}
+
+function buildBeatsPreview(beats) {
+  if (!Array.isArray(beats)) return "";
+  const titles = beats
+    .map((beat, index) => extractBeatTitle(beat, index))
+    .filter((title) => title && title.trim())
+    .slice(0, 3);
+  return titles.join("\n");
+}
+
+function buildPreviewFields(content) {
+  const beats = Array.isArray(content?.beats) ? content.beats : [];
+  return {
+    beats_count: beats.length,
+    beats_preview: buildBeatsPreview(beats),
+    tone_image_url: content?.toneImage || content?.tone_image || content?.tone_image_url || null,
+  };
+}
 
 /**
  * Build share metadata for a deck (for list view - without full content)
@@ -225,7 +259,11 @@ router.get("/", requireUser, async (req, res) => {
       if (error.message?.includes("column") && 
           (error.message?.includes("tool") || 
            error.message?.includes("updated_at") ||
-           error.message?.includes("story_type"))) {
+           error.message?.includes("story_type") ||
+           error.message?.includes("tagline") ||
+           error.message?.includes("tone_image_url") ||
+           error.message?.includes("beats_count") ||
+           error.message?.includes("beats_preview"))) {
         console.warn("Some columns may be missing, using fallback query");
         return await listDecksFallback(req, res, userId, db, validatedTool, limit, offset);
       }
@@ -272,15 +310,18 @@ async function listDecksFallback(req, res, userId, db, toolFilter, limit, offset
     let decks = (data || []).map((row) => {
       const normalized = row.content ? normalizeDeckPayload(row.content) : {};
       const tool = validateTool(normalized.tool);
+      const previewFields = buildPreviewFields(normalized);
       
       return {
         id: row.id,
         title: row.title || normalized.title,
+        tagline: normalized.tagline || null,
         tool,
         story_type: normalized.contentType || null,
         created_at: row.created_at,
         updated_at: row.created_at, // Fallback: use created_at
         thumbnail_url: null,
+        ...previewFields,
         export_pdf_url: row.export_pdf_url,
         prompt: row.prompt || normalized.prompt,
         shareUrl: buildShareUrl(normalized.shareCode),
@@ -437,14 +478,17 @@ router.post("/save", requireUser, async (req, res) => {
     // Extract story_type for indexing - NEVER allow undefined/null
     // Priority: explicit body.story_type > normalized.contentType > fallback based on tool
     const storyType = body.story_type || normalized.contentType || (toolValue === "shot_list" ? "shot_list" : toolValue === "canvas" ? "canvas" : "general");
+    const previewFields = buildPreviewFields(contentWithTitle);
 
     // Build the row with all columns
     const row = {
       ...(id ? { id } : {}),
       user_id: userId,
       title,
+      tagline: normalized.tagline || body.tagline || null,
       tool: toolValue,
       story_type: storyType,
+      ...previewFields,
       prompt: normalized.prompt || "",
       export_pdf_url: src.export_pdf_url || body.export_pdf_url || null,
       content: contentWithTitle,
@@ -701,11 +745,13 @@ router.post("/:id/beats", requireUser, async (req, res) => {
     });
 
     const updatedContent = { ...content, beats };
+    const previewFields = buildPreviewFields(updatedContent);
 
     const { data, error } = await db
       .from("decks")
       .update({ 
         content: updatedContent,
+        ...previewFields,
         updated_at: new Date().toISOString(),
       })
       .eq("user_id", userId)
@@ -775,11 +821,13 @@ router.patch("/:id/beats/:beatIndex", requireUser, async (req, res) => {
     };
 
     const updatedContent = { ...content, beats };
+    const previewFields = buildPreviewFields(updatedContent);
 
     const { data, error } = await db
       .from("decks")
       .update({ 
         content: updatedContent,
+        ...previewFields,
         updated_at: new Date().toISOString(),
       })
       .eq("user_id", userId)
@@ -843,11 +891,13 @@ router.delete("/:id/beats/:beatIndex", requireUser, async (req, res) => {
     });
 
     const updatedContent = { ...content, beats };
+    const previewFields = buildPreviewFields(updatedContent);
 
     const { data, error } = await db
       .from("decks")
       .update({ 
         content: updatedContent,
+        ...previewFields,
         updated_at: new Date().toISOString(),
       })
       .eq("user_id", userId)
@@ -917,11 +967,13 @@ router.put("/:id/beats", requireUser, async (req, res) => {
     });
 
     const updatedContent = { ...content, beats: normalizedBeats };
+    const previewFields = buildPreviewFields(updatedContent);
 
     // Update deck thumbnail if it's null and first beat has media
     const firstBeatThumbnail = normalizedBeats[0]?.visual_url || normalizedBeats[0]?.storyboard_url;
     const updatePayload = {
       content: updatedContent,
+      ...previewFields,
       updated_at: new Date().toISOString(),
     };
     
@@ -1009,11 +1061,13 @@ router.post("/:id/beats/reorder", requireUser, async (req, res) => {
     });
 
     const updatedContent = { ...content, beats: reorderedBeats };
+    const previewFields = buildPreviewFields(updatedContent);
 
     const { data, error } = await db
       .from("decks")
       .update({ 
         content: updatedContent,
+        ...previewFields,
         updated_at: new Date().toISOString(),
       })
       .eq("user_id", userId)
