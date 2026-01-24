@@ -112,6 +112,7 @@ app.use("/api", router);
 
 // Health check (nice for Railway)
 app.get("/", (_req, res) => res.status(200).send("OK"));
+app.get("/health", (_req, res) => res.status(200).send("OK"));
 
 /* -------------------- Error handler -------------------- */
 app.use((err, req, res, _next) => {
@@ -131,6 +132,7 @@ app.use((err, req, res, _next) => {
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-  console.log("Aran API listening on", PORT);
+const HOST = process.env.HOST || "0.0.0.0";
+app.listen(PORT, HOST, () => {
+  console.log("Aran API listening on", `${HOST}:${PORT}`);
 });
